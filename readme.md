@@ -1,5 +1,22 @@
-# NIO Socket Wrapper for Handling Ascii over TCP
+# NIO Socket Wrapper for Handling ASCII over TCP
 
+[![Swift](https://img.shields.io/badge/Swift-6.0+-orange.svg)](https://swift.org)
+[![Platforms](https://img.shields.io/badge/Platforms-macOS%20|%20Linux-lightgrey.svg)](https://swift.org)
+[![SwiftNIO](https://img.shields.io/badge/SwiftNIO-2.0+-blue.svg)](https://github.com/apple/swift-nio)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](#)
+
+A lightweight Swift wrapper around SwiftNIO for handling ASCII text communication over TCP sockets. This library provides an easy-to-use interface for both client and server socket implementations with built-in connection state management and reactive publishers using OpenCombine.
+
+## Features
+
+- **Simple API** - Easy-to-use client and server socket handlers
+- **ASCII Text Protocol** - Optimized for text-based communication
+- **Connection State Management** - Built-in state tracking and notifications
+- **SwiftNIO Powered** - High-performance asynchronous networking
+- **Reactive** - OpenCombine publishers for state changes
+- **Well Tested** - Comprehensive test suite included
+- **Cross Platform** - Works on macOS and Linux
 
 
 ## Layout:
