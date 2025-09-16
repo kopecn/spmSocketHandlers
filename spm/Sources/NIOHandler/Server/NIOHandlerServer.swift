@@ -83,7 +83,9 @@ public final class NIOSocketHandlerServer {
         self.serverDispatchQueue =
             serverDispatchQueue
             ?? DispatchQueue(
-                label: "com.socket-handlers.nio-handler.\(name)", qos: .default)
+                label: "com.socket-handlers.nio-handler.\(name)",
+                qos: .default
+            )
 
         if let group = eventLoopGroup {
             self.group = group
@@ -263,7 +265,10 @@ public final class NIOSocketHandlerServer {
     /// - Returns: An EventLoopFuture that completes when the channel setup is finished.
     ///
     /// - Note: If setup fails, the future will fail with the encountered error.
-    private func setupChildChannel(_ channel: Channel, messageHandler: MessageHandling)
+    private func setupChildChannel(
+        _ channel: Channel,
+        messageHandler: MessageHandling
+    )
         -> EventLoopFuture<Void>
     {
         let clientID = ClientID.uuid(UUID())

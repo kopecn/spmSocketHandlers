@@ -1,8 +1,8 @@
 import NIOCore
 import NIOPosix
+import SocketCommon
 import Testing
 import XCTest
-import SocketCommon
 
 @testable import NIOHandler
 
@@ -54,11 +54,17 @@ func stressorTest_clientServerExchange() async throws {
     print("clientResults: \(clientReceived.count)")
 
     // Validation
-    XCTAssertEqual(serverReceived.sorted(), clientMessagesToSend.sorted(), "Server did not receive all client messages.")
-    XCTAssertEqual(clientReceived.sorted(), serverMessagesToSend.sorted(), "Client did not receive all server messages.")
+    XCTAssertEqual(
+        serverReceived.sorted(),
+        clientMessagesToSend.sorted(),
+        "Server did not receive all client messages."
+    )
+    XCTAssertEqual(
+        clientReceived.sorted(),
+        serverMessagesToSend.sorted(),
+        "Client did not receive all server messages."
+    )
 }
-
-
 
 @Test
 func bounceMessagesBetweenServerAndClient() async throws {
@@ -97,17 +103,18 @@ func bounceMessagesBetweenServerAndClient() async throws {
     print("clientResults: \(clientMessages)")
 
     XCTAssertEqual(
-        serverMessages, clientMessagesToSend, "Server did not receive expected client messages")
+        serverMessages,
+        clientMessagesToSend,
+        "Server did not receive expected client messages"
+    )
     XCTAssertEqual(
-        clientMessages, serverMessagesToSend, "Client did not receive expected server messages")
+        clientMessages,
+        serverMessagesToSend,
+        "Client did not receive expected server messages"
+    )
 
     print("fini")
 }
-
-
-
-
-
 
 @Test func connectClientToNetCat() async throws {
     let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -130,8 +137,8 @@ func bounceMessagesBetweenServerAndClient() async throws {
         }
 
     try client.connect(
-        host: "localhost", 
-        port: 1234, 
+        host: "localhost",
+        port: 1234,
         messageHandler: Handler { message in
             await collector.append(message)
         }
@@ -181,7 +188,7 @@ func bounceMessagesBetweenServerAndClient() async throws {
 
 // MARK: - Helpers
 
-fileprivate final class Handler: MessageHandling {
+private final class Handler: MessageHandling {
     private let handler: @Sendable (String) async -> Void
 
     init(handler: @Sendable @escaping (String) async -> Void) {
@@ -201,10 +208,9 @@ actor MessageCollector {
     }
 
     func getMessages() -> [String] {
-        return messages
+        messages
     }
 }
-
 
 func serverTask(
     port: Int,
@@ -238,7 +244,6 @@ func serverTask(
 
     return await collector.getMessages()
 }
-
 
 func clientTask(
     port: Int,
@@ -283,7 +288,6 @@ func clientTask(
 
     return await collector.getMessages()
 }
-
 
 func timeIt<T>(
     label: String = "⏱ timeIt",

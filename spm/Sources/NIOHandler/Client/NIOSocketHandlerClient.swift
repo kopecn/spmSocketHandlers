@@ -9,6 +9,7 @@ import SocketCommon
 public class NIOSocketHandlerClient {
     // MARK: - Internal Properties
 
+    
     let logger: Logger
     public let name: String
 
@@ -23,7 +24,8 @@ public class NIOSocketHandlerClient {
     // MARK: - State
 
     public let connectionStatePublisher = CurrentValueSubject<SocketClientConnectionState, Never>(
-        .disconnected)
+        .disconnected
+    )
 
     public var isConnected: Bool {
         if case .connected = connectionStatePublisher.value {
@@ -57,7 +59,8 @@ public class NIOSocketHandlerClient {
 
     deinit {
         logger.info(
-            "🟢 NIOSocketHandlerClient deinitialized. Call shutdown() explicitly to clean up.")
+            "🟢 NIOSocketHandlerClient deinitialized. Call shutdown() explicitly to clean up."
+        )
     }
 
     // MARK: - Public API
@@ -235,7 +238,7 @@ public class NIOSocketHandlerClient {
 
 extension NIOSocketHandlerClient: CustomStringConvertible {
     public var description: String {
-        return
-            "\(name):\(String(describing: host)):\(String(describing: port)), state: \(connectionStatePublisher.value)"
+
+        "\(name):\(String(describing: host)):\(String(describing: port)), state: \(connectionStatePublisher.value)"
     }
 }

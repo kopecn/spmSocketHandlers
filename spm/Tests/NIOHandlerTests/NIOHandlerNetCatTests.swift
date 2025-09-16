@@ -1,8 +1,8 @@
 import Foundation
 import NIOPosix
 import SocketCommon
-import XCTest
 import Testing
+import XCTest
 
 @testable import NIOHandler
 
@@ -66,7 +66,7 @@ func netcatEchoTest() async throws {
     try? await eventLoopGroup.shutdownGracefully()
 }
 
-fileprivate final class Handler: MessageHandling {
+private final class Handler: MessageHandling {
     private let handler: @Sendable (String) async -> Void
 
     init(handler: @Sendable @escaping (String) async -> Void) {
