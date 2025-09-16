@@ -85,3 +85,10 @@ sequenceDiagram
         Client->>Client: Shutdown EventLoopGroup
     end
 ```
+
+
+## Planned:
+
+- add timeout and reconnect handling.
+- option for handling/tokenzing datastreams enabling modbus to plug in here.
+- Some examples for easier community adoption.
