@@ -16,8 +16,14 @@ clean:  ## Clean all build artifacts
 build:  ## Build the project in release mode
 	swift build -c release
 
-test:  ## Run tests
+test:  ## Run tests (excluding netcat tests)
 	swift test
+
+test-netcat:  ## Run all tests including netcat integration tests
+	RUN_NETCAT_TESTS=1 swift test
+
+test-netcat-only:  ## Run only netcat integration tests
+	RUN_NETCAT_TESTS=1 swift test --filter "NetCat"
 
 format:  ## Format code using swift-format with explicit config
 	swift-format --configuration $(CONFIG) format --in-place --recursive spm/Sources

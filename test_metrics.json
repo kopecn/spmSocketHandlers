@@ -1,0 +1,9 @@
+{
+  "clientReceived" : 50,
+  "duration" : 2.199470043182373,
+  "messagesPerSecond" : 45.46549761383057,
+  "serverReceived" : 50,
+  "testName" : "stressorTest_deterministicTiming",
+  "timestamp" : "2025-09-23T22:56:22Z",
+  "totalMessages" : 100
+}
