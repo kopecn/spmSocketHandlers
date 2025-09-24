@@ -35,7 +35,7 @@ func netcatEchoTest() async throws {
     let collector = MessageCollector()
     let client = NIOSocketHandlerClient(name: "netcat-test", eventLoopGroup: eventLoopGroup)
 
-    try client.connect(
+    client.connect(
         host: "localhost",
         port: serverPort,
         messageHandler: Handler { message in
@@ -46,12 +46,12 @@ func netcatEchoTest() async throws {
     let messages = (0..<5).map { "echo-\($0)" }
 
     for message in messages {
-        try client.send(message)
+        client.send(message)
         try await Task.sleep(nanoseconds: 100_000_000)  // 0.1 sec delay
     }
 
     try await Task.sleep(nanoseconds: 500_000_000)
-    try client.disconnect()
+    client.disconnect()
 
     // Terminate the netcat process
     ncProcess.terminate()

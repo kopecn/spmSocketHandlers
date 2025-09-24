@@ -5,7 +5,6 @@ import NIOCore
 import NIOPosix
 import OpenCombine
 import SocketCommon
-@preconcurrency import Dispatch
 
 /// A TCP socket client handler built using SwiftNIO.
 ///
@@ -25,7 +24,7 @@ import SocketCommon
 ///
 /// - Important: Call `shutdown()` explicitly to clean up resources when done.
 ///              The deinitializer will log a warning if shutdown wasn't called.
-public class NIOSocketHandlerClient {
+public class NIOSocketHandlerClient: @unchecked Sendable {
     // MARK: - Public Properties
 
     /// The name identifier for this client instance.
@@ -228,7 +227,7 @@ public class NIOSocketHandlerClient {
         host: String,
         port: Int,
         messageHandler: MessageHandling,
-        completion: @escaping (Result<Void, Error>) -> Void
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) {
         socketDispatchQueue.async { [weak self] in
             guard let self = self else {
@@ -243,7 +242,7 @@ public class NIOSocketHandlerClient {
         host: String,
         port: Int,
         messageHandler: MessageHandling,
-        completion: ((Result<Void, Error>) -> Void)? = nil
+        completion: (@Sendable (Result<Void, Error>) -> Void)? = nil
     ) {
         logger.info("🟢 Attempting to connect to \(host):\(port)")
         connectionStatePublisher.send(.connecting)
@@ -328,7 +327,7 @@ public class NIOSocketHandlerClient {
     }
 
     /// Disconnect logic isolated internally, completion called after disconnect finished.
-    private func disconnectInternal(completion: (() -> Void)?) {
+    private func disconnectInternal(completion: (@Sendable () -> Void)?) {
         // Cancel any pending reconnection attempts
         cancelRetryTimer()
 

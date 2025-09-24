@@ -237,7 +237,7 @@ func basicMessageExchange() async throws {
     print("🔗 Connecting to netcat server on localhost:1234")
     print("💡 Make sure to run: nc -l -p 1234")
 
-    try client.connect(
+    client.connect(
         host: "localhost",
         port: 1234,
         messageHandler: Handler { message in
@@ -251,14 +251,14 @@ func basicMessageExchange() async throws {
     // Send a series of test messages
     let testMessages = ["hello from test", "message 2", "final message"]
     for (index, message) in testMessages.enumerated() {
-        try client.send(message)
+        client.send(message)
         print("📤 Sent to netcat (\(index + 1)/\(testMessages.count)): \(message)")
         try await Task.sleep(nanoseconds: 500_000_000)  // 0.5s between messages
     }
 
     try await Task.sleep(nanoseconds: twoSeconds)
 
-    try client.disconnect()
+    client.disconnect()
 
     let receivedMessages = await collector.getMessages()
     print("📊 Test completed. Received \(receivedMessages.count) messages from netcat")
@@ -286,7 +286,7 @@ func basicMessageExchange() async throws {
     print("🚀 Starting server on port 1234")
     print("💡 Connect with: nc localhost 1234")
 
-    try server.listen(
+    server.listen(
         port: 1234,
         messageHandler: Handler { message in
             await collector.append(message)
@@ -299,7 +299,7 @@ func basicMessageExchange() async throws {
         try await Task.sleep(nanoseconds: twoSeconds)
         let message = "server_ping_\(n)_\(Date().timeIntervalSince1970)"
         print("📤 Server sending: \(message)")
-        try server.send(message)
+        server.send(message)
 
         // Check if we received any messages from netcat
         let currentMessages = await collector.getMessages()
@@ -308,7 +308,7 @@ func basicMessageExchange() async throws {
         }
     }
 
-    try server.stopListening()
+    server.stopListening()
 
     let finalMessages = await collector.getMessages()
     print("📊 Test completed. Server received \(finalMessages.count) messages from netcat")
@@ -366,7 +366,7 @@ func serverTask(
     let collector = MessageCollector()
     let server = NIOSocketHandlerServer()
 
-    try server.listen(
+    server.listen(
         port: port,
         messageHandler: Handler { message in
             await collector.append(message)
@@ -377,13 +377,13 @@ func serverTask(
 
     try await timeIt(label: "⚡️ stressorTest_clientServerExchange -- SERVER") {
         for message in messagesToSend {
-            try server.send(message)
+            server.send(message)
             try await Task.sleep(nanoseconds: UInt64.random(in: latencyLower..<latencyUpper))
         }
     }
 
     try await Task.sleep(nanoseconds: delayAfterConnect)
-    try server.stopListening()
+    server.stopListening()
 
     return await collector.getMessages()
 }
@@ -411,7 +411,7 @@ func clientTask(
 
     try await Task.sleep(nanoseconds: delayBeforeConnect)
 
-    try client.connect(
+    client.connect(
         host: "localhost",
         port: port,
         messageHandler: Handler { message in
@@ -421,13 +421,13 @@ func clientTask(
 
     try await timeIt(label: "⚡️ stressorTest_clientServerExchange -- CLIENT") {
         for message in messagesToSend {
-            try client.send(message)
+            client.send(message)
             try await Task.sleep(nanoseconds: UInt64.random(in: latencyLower..<latencyUpper))
         }
     }
 
     try await Task.sleep(nanoseconds: delayAfterSendingMessages)
-    try client.disconnect()
+    client.disconnect()
 
     return await collector.getMessages()
 }
@@ -444,7 +444,7 @@ func deterministicServerTask(
     let collector = MessageCollector()
     let server = NIOSocketHandlerServer()
 
-    try server.listen(
+    server.listen(
         port: port,
         messageHandler: Handler { message in
             await collector.append(message)
@@ -455,13 +455,13 @@ func deterministicServerTask(
 
     try await timeIt(label: "⚡️ deterministicServerTask") {
         for message in messagesToSend {
-            try server.send(message)
+            server.send(message)
             try await Task.sleep(nanoseconds: fixedLatency)
         }
     }
 
     try await Task.sleep(nanoseconds: delayAfterConnect)
-    try server.stopListening()
+    server.stopListening()
 
     return await collector.getMessages()
 }
@@ -488,7 +488,7 @@ func deterministicClientTask(
 
     try await Task.sleep(nanoseconds: delayBeforeConnect)
 
-    try client.connect(
+    client.connect(
         host: "localhost",
         port: port,
         messageHandler: Handler { message in
@@ -498,13 +498,13 @@ func deterministicClientTask(
 
     try await timeIt(label: "⚡️ deterministicClientTask") {
         for message in messagesToSend {
-            try client.send(message)
+            client.send(message)
             try await Task.sleep(nanoseconds: fixedLatency)
         }
     }
 
     try await Task.sleep(nanoseconds: delayAfterSendingMessages)
-    try client.disconnect()
+    client.disconnect()
 
     return await collector.getMessages()
 }

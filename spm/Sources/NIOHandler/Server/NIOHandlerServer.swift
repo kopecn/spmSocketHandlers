@@ -5,7 +5,6 @@ import NIOCore
 import NIOPosix
 import OpenCombine
 import SocketCommon
-@preconcurrency import Dispatch
 
 /// A TCP socket server handler built using SwiftNIO.
 ///
@@ -21,7 +20,7 @@ import SocketCommon
 ///
 /// Use `listen(port:messageHandler:)` to start the server,
 /// and `shutdown()` to stop it and release resources cleanly.
-public final class NIOSocketHandlerServer {
+public final class NIOSocketHandlerServer: @unchecked Sendable {
     // MARK: - Public Publishers
     /// Publishes updates about the current listening state of the socket server.
     ///
