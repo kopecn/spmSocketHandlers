@@ -1,7 +1,7 @@
 import Foundation
 import NIOCore
 import NIOPosix
-import Combine
+import OpenCombine
 @testable import NIOHandler
 
 // MARK: - Connection Helpers
