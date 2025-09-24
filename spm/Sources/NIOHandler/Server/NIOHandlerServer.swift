@@ -5,6 +5,7 @@ import NIOCore
 import NIOPosix
 import OpenCombine
 import SocketCommon
+@preconcurrency import Dispatch
 
 /// A TCP socket server handler built using SwiftNIO.
 ///
@@ -97,7 +98,7 @@ public final class NIOSocketHandlerServer {
             serverDispatchQueue
             ?? DispatchQueue(
                 label: "com.socket-handlers.nio-handler.\(name)",
-                qos: configuration.qosClass
+                qos: configuration.qosClass.dispatchQoS
             )
 
         if let group = eventLoopGroup {
@@ -147,7 +148,7 @@ public final class NIOSocketHandlerServer {
             let bootstrap = ServerBootstrap(group: self.group)
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: self.configuration.reuseAddress ? 1 : 0)
                 .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: self.configuration.reuseAddress ? 1 : 0)
-                .childChannelOption(ChannelOptions.socketOption(.so_keepalive), value: Int32(self.configuration.enableKeepAlive ? 1 : 0))
+                .childChannelOption(ChannelOptions.socketOption(.so_keepalive), value: self.configuration.enableKeepAlive ? 1 : 0)
                 .childChannelInitializer { [weak self] channel in
                     guard let self = self else {
                         return channel.eventLoop.makeFailedFuture(

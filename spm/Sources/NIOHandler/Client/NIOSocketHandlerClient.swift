@@ -5,6 +5,7 @@ import NIOCore
 import NIOPosix
 import OpenCombine
 import SocketCommon
+@preconcurrency import Dispatch
 
 /// A TCP socket client handler built using SwiftNIO.
 ///
@@ -109,7 +110,7 @@ public class NIOSocketHandlerClient {
         self.configuration = configuration
         let label = "com.socket-handlers.nio-handler.\(name)"
         self.logger = Logger(label: label)
-        self.socketDispatchQueue = dispatchQueue ?? DispatchQueue(label: label, qos: configuration.qosClass)
+        self.socketDispatchQueue = dispatchQueue ?? DispatchQueue(label: label, qos: configuration.qosClass.dispatchQoS)
 
         // Initialize message queue using configuration values
         let queueConfig = MessageQueue.Configuration(
