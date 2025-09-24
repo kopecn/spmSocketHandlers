@@ -20,7 +20,7 @@ import SocketCommon
 ///
 /// Use `listen(port:messageHandler:)` to start the server,
 /// and `shutdown()` to stop it and release resources cleanly.
-public final class NIOSocketHandlerServer {
+public final class NIOSocketHandlerServer: @unchecked Sendable {
     // MARK: - Public Publishers
     /// Publishes updates about the current listening state of the socket server.
     ///
@@ -41,6 +41,9 @@ public final class NIOSocketHandlerServer {
 
     /// The name of the server instance.
     public let name: String
+
+    /// The configuration for this server instance.
+    public let configuration: ServerConfiguration
 
     /// Logger instance used for logging server events and messages.
     private let logger: Logger
@@ -63,10 +66,18 @@ public final class NIOSocketHandlerServer {
     /// The identifier of the most recently connected client.
     private var lastID: ClientID?
 
+    /// Connection pool management
+    private var connectionQueue: [ClientID] = [] // FIFO queue for connection order
+    private var connectionCountByClient: [ClientID: Int] = [:] // Track messages per client
+
+    /// Message queues per client for handling offline message delivery
+    private var clientMessageQueues: [ClientID: MessageQueue] = [:]
+
     /// Initializes a new `NIOSocketHandlerServer` instance.
     ///
     /// - Parameters:
     ///   - name: The name identifier for this server instance. Defaults to `"nio-handler-server"`.
+    ///   - configuration: The configuration for this server instance. Defaults to `ServerConfiguration.default`.
     ///   - eventLoopGroup: An optional external event loop group. If `nil`, a new `MultiThreadedEventLoopGroup` will be created.
     ///   - serverDispatchQueue: An optional dispatch queue for server operations. If `nil`, a new queue will be created.
     ///
@@ -75,23 +86,25 @@ public final class NIOSocketHandlerServer {
     ///     The caller is responsible for managing the lifecycle of the external event loop group.
     public init(
         name: String = "nio-handler-server",
+        configuration: ServerConfiguration = .default,
         eventLoopGroup: EventLoopGroup? = nil,
         serverDispatchQueue: DispatchQueue? = nil,
     ) {
         self.name = name
+        self.configuration = configuration
         self.logger = Logger(label: "com.socket-handlers.nio-handler.\(name)")
         self.serverDispatchQueue =
             serverDispatchQueue
             ?? DispatchQueue(
                 label: "com.socket-handlers.nio-handler.\(name)",
-                qos: .default
+                qos: configuration.qosClass.dispatchQoS
             )
 
         if let group = eventLoopGroup {
             self.group = group
             self.ownsEventLoopGroup = false
         } else {
-            self.group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+            self.group = MultiThreadedEventLoopGroup(numberOfThreads: configuration.eventLoopThreads)
             self.ownsEventLoopGroup = true
         }
     }
@@ -123,16 +136,18 @@ public final class NIOSocketHandlerServer {
     public func listen(
         port: Int,
         messageHandler: MessageHandling,
-        defaultHost: String = "::1"
+        defaultHost: String? = nil
     ) {
+        let host = defaultHost ?? configuration.bindHost
         serverDispatchQueue.async { [weak self] in
             guard let self = self else { return }
 
-            self.logger.info("🟢 Starting server on [\(defaultHost)]:\(port)")
+            self.logger.info("🟢 Starting server on [\(host)]:\(port)")
 
             let bootstrap = ServerBootstrap(group: self.group)
-                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-                .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: self.configuration.reuseAddress ? 1 : 0)
+                .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: self.configuration.reuseAddress ? 1 : 0)
+                .childChannelOption(ChannelOptions.socketOption(.so_keepalive), value: self.configuration.enableKeepAlive ? 1 : 0)
                 .childChannelInitializer { [weak self] channel in
                     guard let self = self else {
                         return channel.eventLoop.makeFailedFuture(
@@ -142,13 +157,20 @@ public final class NIOSocketHandlerServer {
                     return self.setupChildChannel(channel, messageHandler: messageHandler)
                 }
 
-            do {
-                self.listenerChannel = try bootstrap.bind(host: defaultHost, port: port).wait()
-                self.serverConnectionStatePublisher.send(.listening)
-                self.logger.info("🟢 Server is now listening on port \(port)")
-            } catch {
-                self.serverConnectionStatePublisher.send(.error(err: error))
-                self.logger.error("🔴 Failed to bind server to port \(port): \(error)")
+            bootstrap.bind(host: host, port: port).whenComplete { [weak self] result in
+                guard let self = self else { return }
+
+                self.serverDispatchQueue.async {
+                    switch result {
+                    case .success(let channel):
+                        self.listenerChannel = channel
+                        self.serverConnectionStatePublisher.send(.listening)
+                        self.logger.info("🟢 Server is now listening on port \(port)")
+                    case .failure(let error):
+                        self.serverConnectionStatePublisher.send(.error(err: error))
+                        self.logger.error("🔴 Failed to bind server to port \(port): \(error)")
+                    }
+                }
             }
         }
     }
@@ -159,28 +181,52 @@ public final class NIOSocketHandlerServer {
     ///   - message: The string message to send to the client.
     ///   - id: The specific client ID to send the message to. If nil, the message
     ///         will be sent to the most recently connected client.
+    ///   - priority: The priority of the message (higher values have higher priority). Defaults to 0.
+    ///   - queueIfDisconnected: Whether to queue the message if the client is not connected. Defaults to true.
     ///
     /// - Note: This method executes asynchronously on the server's dispatch queue.
-    ///         If the specified client is not connected or no client ID is available,
-    ///         an error will be logged and the message will not be sent.
+    ///         If the specified client is not connected and queueIfDisconnected is true,
+    ///         the message will be queued for delivery when the client reconnects.
     ///         Messages are automatically terminated with a newline character.
-    public func send(_ message: String, to id: ClientID? = nil) {
+    public func send(_ message: String, to id: ClientID? = nil, priority: Int = 0, queueIfDisconnected: Bool = true) {
         serverDispatchQueue.async { [weak self] in
             guard let self = self else { return }
             guard let clientID = id ?? self.lastID else {
                 self.logger.error("🔴 No client ID provided and no last connected client available.")
                 return
             }
-            guard let channel = self.connectedClients[clientID], channel.isActive else {
-                self.logger.error("🔴 Channel for client \(clientID) is not connected.")
-                return
+
+            if let channel = self.connectedClients[clientID], channel.isActive {
+                // Send immediately if client is connected
+                var buffer = channel.allocator.buffer(capacity: max(self.configuration.bufferSize, message.utf8.count + 1))
+                buffer.writeString(message + "\n")
+                channel.writeAndFlush(buffer, promise: nil)
+
+                self.logger.debug("🔵 Sent message to client \(clientID): \(message)")
+                self.connectionCountByClient[clientID] = (self.connectionCountByClient[clientID] ?? 0) + 1
+            } else if queueIfDisconnected {
+                // Queue for later delivery if client is disconnected
+                let queuedMessage = MessageQueue.QueuedMessage(content: message, priority: priority, targetID: String(describing: clientID))
+
+                // Ensure we have a message queue for this client
+                if self.clientMessageQueues[clientID] == nil {
+                    let queueConfig = MessageQueue.Configuration(
+                        maxQueueSize: self.configuration.clientMessageQueueSize,
+                        persistToDisk: false,
+                        messageExpirationTime: self.configuration.clientMessageExpirationTime,
+                        persistencePath: nil
+                    )
+                    self.clientMessageQueues[clientID] = MessageQueue(configuration: queueConfig)
+                }
+
+                if self.clientMessageQueues[clientID]?.enqueue(queuedMessage) == true {
+                    self.logger.info("📥 Message queued for client \(clientID): \(message)")
+                } else {
+                    self.logger.warning("⚠️ Failed to queue message for client \(clientID) (queue full): \(message)")
+                }
+            } else {
+                self.logger.error("🔴 Client \(clientID) is not connected and message queuing is disabled.")
             }
-
-            var buffer = channel.allocator.buffer(capacity: message.utf8.count + 1)
-            buffer.writeString(message + "\n")
-            channel.writeAndFlush(buffer, promise: nil)
-
-            self.logger.debug("🔵 Sent message to client \(clientID): \(message)")
         }
     }
 
@@ -202,11 +248,17 @@ public final class NIOSocketHandlerServer {
                 return
             }
 
-            do {
-                try listener.close().wait()
-                self.logger.info("🟢 Listener channel closed.")
-            } catch {
-                self.logger.error("🔴 Failed to close listener channel: \(error)")
+            listener.close().whenComplete { [weak self] result in
+                guard let self = self else { return }
+
+                self.serverDispatchQueue.async {
+                    switch result {
+                    case .success:
+                        self.logger.info("🟢 Listener channel closed.")
+                    case .failure(let error):
+                        self.logger.error("🔴 Failed to close listener channel: \(error)")
+                    }
+                }
             }
 
             self.listenerChannel = nil
@@ -271,10 +323,42 @@ public final class NIOSocketHandlerServer {
     )
         -> EventLoopFuture<Void>
     {
+        // Check if we've reached the maximum connection limit
+        if connectedClients.count >= configuration.maxConnections {
+            logger.warning("🔴 Maximum connections (\(configuration.maxConnections)) reached. Rejecting new connection.")
+
+            // Send a rejection message and close the connection
+            let rejectionMessage = "Server at maximum capacity. Connection rejected.\n"
+            var buffer = channel.allocator.buffer(capacity: rejectionMessage.utf8.count)
+            buffer.writeString(rejectionMessage)
+
+            return channel.writeAndFlush(buffer).flatMap {
+                channel.close()
+            }.flatMapError { _ in
+                // Even if write fails, still close the channel
+                channel.close()
+            }
+        }
+
         let clientID = ClientID.uuid(UUID())
         self.lastID = clientID
         self.connectedClients[clientID] = channel
+        self.connectionQueue.append(clientID)
+        self.connectionCountByClient[clientID] = 0
+
+        // Create a message queue for this client
+        let queueConfig = MessageQueue.Configuration(
+            maxQueueSize: self.configuration.clientMessageQueueSize,
+            persistToDisk: false,
+            messageExpirationTime: self.configuration.clientMessageExpirationTime,
+            persistencePath: nil
+        )
+        self.clientMessageQueues[clientID] = MessageQueue(configuration: queueConfig)
+
         self.addConnectedClient(clientID)
+
+        // Send any queued messages for this client
+        sendQueuedMessages(for: clientID)
 
         channel.closeFuture.whenComplete { [weak self] _ in
             self?.handleClientDisconnection(clientID)
@@ -317,8 +401,18 @@ public final class NIOSocketHandlerServer {
             self.connectedClients.removeValue(forKey: clientID)
             self.removeConnectedClient(clientID)
 
+            // Clean up connection pool management state
+            if let index = self.connectionQueue.firstIndex(of: clientID) {
+                self.connectionQueue.remove(at: index)
+            }
+            self.connectionCountByClient.removeValue(forKey: clientID)
+
+            // Note: We don't remove the message queue here to preserve offline messages
+            // The queue will be cleaned up naturally through expiration or when the client reconnects
+
             if self.lastID == clientID {
-                self.lastID = nil
+                // Set last ID to the most recent client in the queue
+                self.lastID = self.connectionQueue.last
             }
             self.logger.info("🟢 Client \(clientID) disconnected")
         }
@@ -369,11 +463,13 @@ public final class NIOSocketHandlerServer {
     ///         The listener channel reference is set to nil regardless of the close operation result.
     private func closeListener() {
         if let listener = self.listenerChannel {
-            do {
-                try listener.close().wait()
-                self.logger.info("🟢 Listener channel closed during shutdown.")
-            } catch {
-                self.logger.warning("⚠️ Error closing listener channel: \(error)")
+            listener.close().whenComplete { [weak self] result in
+                switch result {
+                case .success:
+                    self?.logger.info("🟢 Listener channel closed during shutdown.")
+                case .failure(let error):
+                    self?.logger.warning("⚠️ Error closing listener channel: \(error)")
+                }
             }
             self.listenerChannel = nil
         }
@@ -388,16 +484,148 @@ public final class NIOSocketHandlerServer {
     ///         This ensures that the server can complete shutdown even if some client disconnections fail.
     private func closeAllClients() {
         for (id, channel) in self.connectedClients {
-            do {
-                try channel.close().wait()
-                self.logger.info("🟢 Closed connection to client \(id)")
-            } catch {
-                self.logger.warning("⚠️ Error closing client \(id): \(error)")
+            channel.close().whenComplete { [weak self] result in
+                switch result {
+                case .success:
+                    self?.logger.info("🟢 Closed connection to client \(id)")
+                case .failure(let error):
+                    self?.logger.warning("⚠️ Error closing client \(id): \(error)")
+                }
             }
         }
 
         self.connectedClients.removeAll()
+        self.connectionQueue.removeAll()
+        self.connectionCountByClient.removeAll()
+        self.clientMessageQueues.removeAll()
         self.connectedClientIDsPublisher.send([])
+    }
+
+    /// Gets connection statistics for monitoring and debugging.
+    ///
+    /// - Returns: A dictionary containing connection statistics including total connections,
+    ///           connection limit, and per-client message counts.
+    public func getConnectionStats() -> [String: Any] {
+        var stats: [String: Any] = [:]
+
+        serverDispatchQueue.sync {
+            stats["totalConnections"] = connectedClients.count
+            stats["maxConnections"] = configuration.maxConnections
+            stats["connectionUtilization"] = Double(connectedClients.count) / Double(configuration.maxConnections)
+            stats["connectionQueue"] = connectionQueue
+            stats["messageCountsByClient"] = connectionCountByClient
+            stats["oldestConnection"] = connectionQueue.first
+            stats["newestConnection"] = connectionQueue.last
+        }
+
+        return stats
+    }
+
+    /// Disconnects the oldest connected client to make room for new connections.
+    ///
+    /// This method can be used when implementing custom connection management policies.
+    /// It disconnects the client that has been connected the longest.
+    ///
+    /// - Returns: The ID of the disconnected client, or nil if no clients are connected.
+    @discardableResult
+    public func disconnectOldestClient() -> ClientID? {
+        var disconnectedClient: ClientID?
+
+        serverDispatchQueue.sync {
+            guard let oldestClientID = connectionQueue.first,
+                  let channel = connectedClients[oldestClientID] else {
+                return
+            }
+
+            disconnectedClient = oldestClientID
+            logger.info("🔄 Disconnecting oldest client \(oldestClientID) to make room for new connections")
+
+            channel.close().whenComplete { [weak self] result in
+                switch result {
+                case .success:
+                    self?.logger.info("🟢 Successfully disconnected oldest client \(oldestClientID)")
+                case .failure(let error):
+                    self?.logger.warning("⚠️ Error disconnecting oldest client \(oldestClientID): \(error)")
+                }
+            }
+        }
+
+        return disconnectedClient
+    }
+
+    /// Sends queued messages for a specific client when they reconnect.
+    ///
+    /// - Parameter clientID: The ID of the client to send queued messages to.
+    private func sendQueuedMessages(for clientID: ClientID) {
+        guard let channel = connectedClients[clientID], channel.isActive,
+              let messageQueue = clientMessageQueues[clientID] else {
+            return
+        }
+
+        let queueCount = messageQueue.count
+        guard queueCount > 0 else { return }
+
+        logger.info("📤 Sending \(queueCount) queued messages to client \(clientID)")
+
+        while let queuedMessage = messageQueue.dequeue() {
+            guard channel.isActive else {
+                // If connection is lost while sending queued messages, re-queue the message
+                messageQueue.enqueue(queuedMessage)
+                break
+            }
+
+            var buffer = channel.allocator.buffer(capacity: max(configuration.bufferSize, queuedMessage.content.utf8.count + 1))
+            buffer.writeString(queuedMessage.content + "\n")
+
+            channel.writeAndFlush(buffer, promise: nil)
+            logger.debug("📤 Queued message sent to client \(clientID): \(queuedMessage.content)")
+            connectionCountByClient[clientID] = (connectionCountByClient[clientID] ?? 0) + 1
+        }
+
+        let remainingCount = messageQueue.count
+        if remainingCount == 0 {
+            logger.info("✅ All queued messages sent to client \(clientID)")
+        } else {
+            logger.warning("⚠️ \(remainingCount) messages remain in queue for client \(clientID) after connection lost")
+        }
+    }
+
+    /// Gets the number of queued messages for a specific client.
+    ///
+    /// - Parameter clientID: The ID of the client.
+    /// - Returns: The number of queued messages for the client.
+    public func getQueuedMessageCount(for clientID: ClientID) -> Int {
+        return serverDispatchQueue.sync {
+            return clientMessageQueues[clientID]?.count ?? 0
+        }
+    }
+
+    /// Clears all queued messages for a specific client.
+    ///
+    /// - Parameter clientID: The ID of the client.
+    /// - Returns: The number of messages that were cleared.
+    @discardableResult
+    public func clearQueuedMessages(for clientID: ClientID) -> Int {
+        return serverDispatchQueue.sync {
+            guard let messageQueue = clientMessageQueues[clientID] else { return 0 }
+            let count = messageQueue.count
+            messageQueue.clear()
+            logger.info("🗑️ Cleared \(count) queued messages for client \(clientID)")
+            return count
+        }
+    }
+
+    /// Gets statistics about all client message queues.
+    ///
+    /// - Returns: A dictionary mapping client IDs to their queued message counts.
+    public func getAllQueueStats() -> [String: Int] {
+        return serverDispatchQueue.sync {
+            var stats: [String: Int] = [:]
+            for (clientID, queue) in clientMessageQueues {
+                stats[String(describing: clientID)] = queue.count
+            }
+            return stats
+        }
     }
 
     /// Shuts down the event loop group if this server instance owns it.

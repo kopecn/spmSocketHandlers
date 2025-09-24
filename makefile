@@ -1,4 +1,4 @@
-.PHONY: help clean build test format tag version checkGitClean mermaid bump-patch bump-minor bump-major
+.PHONY: help clean build test test-netcat-client-only test-netcat-server-only format tag version checkGitClean mermaid bump-patch bump-minor bump-major release
 
 .DEFAULT_GOAL := help
 
@@ -16,8 +16,14 @@ clean:  ## Clean all build artifacts
 build:  ## Build the project in release mode
 	swift build -c release
 
-test:  ## Run tests
-	swift test
+test:  ## Run tests (excluding netcat tests)
+	swift test --no-parallel
+
+test-netcat-client-only:  ## Run only netcat client integration tests
+	RUN_NETCAT_CLIENT_TESTS=1 swift test --filter "connectClientToNetCat" --no-parallel
+
+test-netcat-server-only:  ## Run only netcat server integration tests
+	RUN_NETCAT_SERVER_TESTS=1 swift test --filter "connectServerToNetCat" --no-parallel
 
 format:  ## Format code using swift-format with explicit config
 	swift-format --configuration $(CONFIG) format --in-place --recursive spm/Sources
