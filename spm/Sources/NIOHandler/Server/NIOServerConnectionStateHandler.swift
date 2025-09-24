@@ -1,6 +1,6 @@
 import Foundation
-import NIOCore
 import Logging
+import NIOCore
 import SocketCommon
 
 /// A ChannelInboundHandler that observes individual connection events for a server.

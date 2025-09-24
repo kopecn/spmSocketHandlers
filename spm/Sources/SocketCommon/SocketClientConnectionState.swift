@@ -1,6 +1,6 @@
 /// Represents the various connection states of a socket client.
 public enum SocketClientConnectionState: Equatable, Sendable, CustomStringConvertible {
-    
+
     /// The client is currently connected.
     case connected
 
@@ -25,17 +25,17 @@ public enum SocketClientConnectionState: Equatable, Sendable, CustomStringConver
     public static func == (lhs: SocketClientConnectionState, rhs: SocketClientConnectionState) -> Bool {
         switch (lhs, rhs) {
         case (.connected, .connected),
-             (.connecting, .connecting),
-             (.disconnected, .disconnected),
-             (.disconnecting, .disconnecting):
+            (.connecting, .connecting),
+            (.disconnected, .disconnected),
+            (.disconnecting, .disconnecting):
             return true
         case (.error, .error):
-            return true // Treat all errors as equal
+            return true  // Treat all errors as equal
         default:
             return false
         }
     }
-    
+
     public var description: String {
         switch self {
         case .connected:

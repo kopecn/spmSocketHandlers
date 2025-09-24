@@ -1,4 +1,3 @@
-
 import Logging
 import NIOCore
 import NIOPosix
@@ -9,7 +8,7 @@ final class LineBasedFrameDecoder: ByteToMessageDecoder, Sendable {
 
     func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
         if let bytes = buffer.readSlice(length: buffer.readableBytes),
-           let newlineIndex = bytes.readableBytesView.firstIndex(of: UInt8(ascii: "\n"))
+            let newlineIndex = bytes.readableBytesView.firstIndex(of: UInt8(ascii: "\n"))
         {
             let length = newlineIndex - bytes.readerIndex + 1
             if let frame = buffer.readSlice(length: length) {

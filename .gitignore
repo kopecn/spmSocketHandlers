@@ -6,6 +6,10 @@
 .swiftpm/
 DerivedData/
 
+# Test output files
+test_metrics.json
+*.test-output
+
 # Xcode user data
 xcuserdata/
 *.xcuserstate

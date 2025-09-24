@@ -1,6 +1,6 @@
 /// Represents the state of a server's listener, indicating whether it is off, listening, has active connections, or encountered an error.
 public enum SocketServerListeningState: Equatable, Sendable, CustomStringConvertible {
-    
+
     /// The server is currently turned off and not listening for incoming connections.
     case off
 
@@ -24,16 +24,16 @@ public enum SocketServerListeningState: Equatable, Sendable, CustomStringConvert
     public static func == (lhs: SocketServerListeningState, rhs: SocketServerListeningState) -> Bool {
         switch (lhs, rhs) {
         case (.off, .off),
-             (.listening, .listening),
-             (.activeConnections, .activeConnections):
+            (.listening, .listening),
+            (.activeConnections, .activeConnections):
             return true
         case (.error, .error):
-            return true // Treat any error as equal
+            return true  // Treat any error as equal
         default:
             return false
         }
     }
-    
+
     public var description: String {
         switch self {
         case .off:

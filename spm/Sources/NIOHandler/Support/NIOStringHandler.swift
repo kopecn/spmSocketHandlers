@@ -22,7 +22,7 @@ import SocketCommon
 ///   fragments across multiple reads.
 ///
 /// - SeeAlso: `ChannelInboundHandler`, `ByteBuffer`, `MessageHandling`
-/// 
+///
 /// A handler that decodes incoming ByteBuffers into UTF-8 strings based on a configurable tokenizer,
 /// and forwards them asynchronously.
 final class NIOStringHandler: ChannelInboundHandler {
