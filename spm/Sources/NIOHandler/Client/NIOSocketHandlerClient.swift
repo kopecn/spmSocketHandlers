@@ -381,9 +381,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
             } else if queueIfDisconnected {
                 // Queue for later delivery if disconnected
                 let queuedMessage = MessageQueue.QueuedMessage(content: message, priority: priority)
-                if self.messageQueue.enqueue(queuedMessage) {
-                    self.logger.info("📥 Message queued for delivery when reconnected: \(message)")
-                } else {
+                if !self.messageQueue.enqueue(queuedMessage) {
                     self.logger.warning("⚠️ Failed to queue message (queue full): \(message)")
                 }
             } else {

@@ -31,3 +31,17 @@ func timeIt<T>(
     print("\(label): \(String(format: "%.2f", ms)) ms")
     return result
 }
+
+func timeItWithDuration<T>(
+    label: String = "⏱ timeIt",
+    _ block: () async throws -> T
+) async rethrows -> (result: T, duration: TimeInterval) {
+    let start = DispatchTime.now()
+    let result = try await block()
+    let end = DispatchTime.now()
+    let nanoTime = end.uptimeNanoseconds - start.uptimeNanoseconds
+    let duration = Double(nanoTime) / 1_000_000_000  // Convert to seconds
+    let ms = Double(nanoTime) / 1_000_000
+    print("\(label): \(String(format: "%.2f", ms)) ms")
+    return (result, duration)
+}

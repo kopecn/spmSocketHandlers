@@ -18,36 +18,35 @@ func stressorTest_deterministicTiming() async throws {
         }
     }
 
-    let totalMessages = 100  // Reduced for deterministic timing
-    let fixedLatency: UInt64 = 1_000_000  // 1ms fixed
+    let totalMessages = 10000  // Stress test with 10k messages
+    let fixedLatency: UInt64 = 1_000  // 1us fixed
 
     let allMessages = (0..<totalMessages).map { i in "Message_\(String(format: "%04d", i))" }
 
     let clientMessagesToSend = Array(allMessages.prefix(totalMessages / 2))
     let serverMessagesToSend = Array(allMessages.suffix(totalMessages / 2))
 
-    let startTime = Date()
-
-    async let serverResults = try deterministicServerTask(
-        port: stressorPort,
+    async let serverResults = try deterministicServerTaskWithTiming(
+        port: deterministicPort,
         messagesToSend: serverMessagesToSend,
-        delayBeforeConnect: oneSecond,
+        delayBeforeConnect: shortDelay,  // Reduced delay for server start
         delayAfterConnect: twoSeconds,
         fixedLatency: fixedLatency
     )
 
-    async let clientResults = try deterministicClientTask(
-        port: stressorPort,
+    async let clientResults = try deterministicClientTaskWithTiming(
+        port: deterministicPort,
         messagesToSend: clientMessagesToSend,
-        delayBeforeConnect: shortDelay,
+        delayBeforeConnect: oneSecond,  // Increased delay to let server start first
         delayAfterSendingMessages: twoSeconds,
         eventLoopGroup: eventLoopGroup,
         fixedLatency: fixedLatency
     )
 
-    let (serverMessages, clientMessages) = try await (serverResults, clientResults)
-    let endTime = Date()
-    let duration = endTime.timeIntervalSince(startTime)
+    let ((serverMessages, serverDuration), (clientMessages, clientDuration)) = try await (serverResults, clientResults)
+
+    // Use combined duration for message exchange only (excluding setup/teardown)
+    let duration = max(serverDuration, clientDuration)
 
     let metrics = TestMetrics(
         testName: "stressorTest_deterministicTiming",
@@ -78,39 +77,38 @@ func stressorTest_variableTiming() async throws {
         }
     }
 
-    let totalMessages = 50  // Reduced for testing
-    let minLatency: UInt64 = 10_000_000    // 10ms
-    let maxLatency: UInt64 = 100_000_000   // 100ms
+    let totalMessages = 15000  // Stress test with 15k messages
+    let minLatency: UInt64 = 1_000    // 1us
+    let maxLatency: UInt64 = 100_000   // 100us
 
     let allMessages = (0..<totalMessages).map { i in "Message_\(String(format: "%04d", i))" }
 
     let clientMessagesToSend = Array(allMessages.prefix(totalMessages / 2))
     let serverMessagesToSend = Array(allMessages.suffix(totalMessages / 2))
 
-    let startTime = Date()
-
-    async let serverResults = try serverTask(
-        port: stressorPort,
+    async let serverResults = try serverTaskWithTiming(
+        port: variablePort,
         messagesToSend: serverMessagesToSend,
-        delayBeforeConnect: oneSecond,
+        delayBeforeConnect: shortDelay,  // Reduced delay for server start
         delayAfterConnect: twoSeconds,
         latencyLower: minLatency,
         latencyUpper: maxLatency
     )
 
-    async let clientResults = try clientTask(
-        port: stressorPort,
+    async let clientResults = try clientTaskWithTiming(
+        port: variablePort,
         messagesToSend: clientMessagesToSend,
-        delayBeforeConnect: shortDelay,
+        delayBeforeConnect: oneSecond,  // Increased delay to let server start first
         delayAfterSendingMessages: twoSeconds,
         eventLoopGroup: eventLoopGroup,
         latencyLower: minLatency,
         latencyUpper: maxLatency
     )
 
-    let (serverMessages, clientMessages) = try await (serverResults, clientResults)
-    let endTime = Date()
-    let duration = endTime.timeIntervalSince(startTime)
+    let ((serverMessages, serverDuration), (clientMessages, clientDuration)) = try await (serverResults, clientResults)
+
+    // Use combined duration for message exchange only (excluding setup/teardown)
+    let duration = max(serverDuration, clientDuration)
 
     let metrics = TestMetrics(
         testName: "stressorTest_variableTiming",
