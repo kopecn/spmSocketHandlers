@@ -2,6 +2,7 @@ import Foundation
 import NIOCore
 import NIOPosix
 import OpenCombine
+
 @testable import NIOHandler
 
 // MARK: - Connection Helpers
@@ -22,15 +23,21 @@ func waitForClientConnection(server: NIOSocketHandlerServer, timeout: TimeInterv
         // Log progress every 2 seconds
         let currentTime = Date()
         if currentTime.timeIntervalSince(lastLogTime) >= 2.0 {
-            print("⏳ Still waiting for client connection... (\(String(format: "%.1f", currentTime.timeIntervalSince(startTime)))s elapsed)")
+            print(
+                "⏳ Still waiting for client connection... (\(String(format: "%.1f", currentTime.timeIntervalSince(startTime)))s elapsed)"
+            )
             lastLogTime = currentTime
         }
 
-        try await Task.sleep(nanoseconds: 100_000_000) // 100ms polling interval
+        try await Task.sleep(nanoseconds: 100_000_000)  // 100ms polling interval
     }
 
     print("❌ Timeout waiting for client connection after \(timeout)s")
-    throw NSError(domain: "TestError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for client connection"])
+    throw NSError(
+        domain: "TestError",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for client connection"]
+    )
 }
 
 // MARK: - Test Task Functions
@@ -66,10 +73,10 @@ func serverTask(
     }
 
     try await Task.sleep(nanoseconds: delayAfterConnect)
-    server.shutdown() // Use proper shutdown instead of stopListening
+    server.shutdown()  // Use proper shutdown instead of stopListening
 
     // Add small delay to ensure port is released
-    try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+    try await Task.sleep(nanoseconds: 200_000_000)  // 200ms
 
     return await collector.getMessages()
 }
@@ -150,10 +157,10 @@ func deterministicServerTask(
     }
 
     try await Task.sleep(nanoseconds: delayAfterConnect)
-    server.shutdown() // Use proper shutdown instead of stopListening
+    server.shutdown()  // Use proper shutdown instead of stopListening
 
     // Add small delay to ensure port is released
-    try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+    try await Task.sleep(nanoseconds: 200_000_000)  // 200ms
 
     return await collector.getMessages()
 }
@@ -233,10 +240,10 @@ func deterministicServerTaskWithTiming(
     }
 
     try await Task.sleep(nanoseconds: delayAfterConnect)
-    server.shutdown() // Use proper shutdown instead of stopListening
+    server.shutdown()  // Use proper shutdown instead of stopListening
 
     // Add small delay to ensure port is released
-    try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+    try await Task.sleep(nanoseconds: 200_000_000)  // 200ms
 
     let messages = await collector.getMessages()
     return (messages, duration)
@@ -275,7 +282,7 @@ func deterministicClientTaskWithTiming(
     )
 
     // Wait a moment for connection to establish
-    try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+    try await Task.sleep(nanoseconds: 200_000_000)  // 200ms
 
     let (_, duration) = try await timeItWithDuration(label: "⚡️ deterministicClientTask") {
         for message in messagesToSend {
@@ -326,10 +333,10 @@ func serverTaskWithTiming(
     }
 
     try await Task.sleep(nanoseconds: delayAfterConnect)
-    server.shutdown() // Use proper shutdown instead of stopListening
+    server.shutdown()  // Use proper shutdown instead of stopListening
 
     // Add small delay to ensure port is released
-    try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+    try await Task.sleep(nanoseconds: 200_000_000)  // 200ms
 
     let messages = await collector.getMessages()
     return (messages, duration)
@@ -369,7 +376,7 @@ func clientTaskWithTiming(
     )
 
     // Wait a moment for connection to establish
-    try await Task.sleep(nanoseconds: 200_000_000) // 200ms
+    try await Task.sleep(nanoseconds: 200_000_000)  // 200ms
 
     let (_, duration) = try await timeItWithDuration(label: "⚡️ stressorTest_clientServerExchange -- CLIENT") {
         for message in messagesToSend {

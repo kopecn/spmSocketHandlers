@@ -1,5 +1,5 @@
-import Foundation
 import Dispatch
+import Foundation
 
 /// Quality of service levels for dispatch queues.
 public enum QoSClass: Sendable {

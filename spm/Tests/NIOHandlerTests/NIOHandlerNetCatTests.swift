@@ -100,7 +100,7 @@ func connectServerToNetCat() async throws {
 }
 @Test
 func netcatEchoTest() async throws {
-    return // This method is not ready
+    return  // This method is not ready
     let serverPort = 4567
     let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 

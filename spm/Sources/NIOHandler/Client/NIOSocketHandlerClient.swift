@@ -503,9 +503,10 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     /// Schedules a reconnection attempt based on the retry policy.
     private func scheduleReconnection() {
         guard configuration.enableAutoReconnect,
-              let host = self.host,
-              let port = self.port,
-              let messageHandler = self.lastMessageHandler else {
+            let host = self.host,
+            let port = self.port,
+            let messageHandler = self.lastMessageHandler
+        else {
             return
         }
 
@@ -567,7 +568,9 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
                 break
             }
 
-            var buffer = channel.allocator.buffer(capacity: max(configuration.bufferSize, queuedMessage.content.utf8.count + 1))
+            var buffer = channel.allocator.buffer(
+                capacity: max(configuration.bufferSize, queuedMessage.content.utf8.count + 1)
+            )
             buffer.writeString(queuedMessage.content + "\n")
 
             channel.writeAndFlush(buffer, promise: nil)

@@ -42,7 +42,7 @@
     "NoLeadingUnderscores" : false,
     "NoParensAroundConditions" : true,
     "NoVoidReturnOnFunctionSignature" : true,
-    "OmitExplicitReturns" : true,
+    "OmitExplicitReturns" : false,
     "OneCasePerLine" : true,
     "OneVariableDeclarationPerLine" : true,
     "OnlyOneTrailingClosureArgument" : true,

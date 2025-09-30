@@ -67,8 +67,8 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     private var lastID: ClientID?
 
     /// Connection pool management
-    private var connectionQueue: [ClientID] = [] // FIFO queue for connection order
-    private var connectionCountByClient: [ClientID: Int] = [:] // Track messages per client
+    private var connectionQueue: [ClientID] = []  // FIFO queue for connection order
+    private var connectionCountByClient: [ClientID: Int] = [:]  // Track messages per client
 
     /// Message queues per client for handling offline message delivery
     private var clientMessageQueues: [ClientID: MessageQueue] = [:]
@@ -145,9 +145,18 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
             self.logger.info("🟢 Starting server on [\(host)]:\(port)")
 
             let bootstrap = ServerBootstrap(group: self.group)
-                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: self.configuration.reuseAddress ? 1 : 0)
-                .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: self.configuration.reuseAddress ? 1 : 0)
-                .childChannelOption(ChannelOptions.socketOption(.so_keepalive), value: self.configuration.enableKeepAlive ? 1 : 0)
+                .serverChannelOption(
+                    ChannelOptions.socketOption(.so_reuseaddr),
+                    value: self.configuration.reuseAddress ? 1 : 0
+                )
+                .childChannelOption(
+                    ChannelOptions.socketOption(.so_reuseaddr),
+                    value: self.configuration.reuseAddress ? 1 : 0
+                )
+                .childChannelOption(
+                    ChannelOptions.socketOption(.so_keepalive),
+                    value: self.configuration.enableKeepAlive ? 1 : 0
+                )
                 .childChannelInitializer { [weak self] channel in
                     guard let self = self else {
                         return channel.eventLoop.makeFailedFuture(
@@ -198,7 +207,9 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
 
             if let channel = self.connectedClients[clientID], channel.isActive {
                 // Send immediately if client is connected
-                var buffer = channel.allocator.buffer(capacity: max(self.configuration.bufferSize, message.utf8.count + 1))
+                var buffer = channel.allocator.buffer(
+                    capacity: max(self.configuration.bufferSize, message.utf8.count + 1)
+                )
                 buffer.writeString(message + "\n")
                 channel.writeAndFlush(buffer, promise: nil)
 
@@ -206,7 +217,11 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
                 self.connectionCountByClient[clientID] = (self.connectionCountByClient[clientID] ?? 0) + 1
             } else if queueIfDisconnected {
                 // Queue for later delivery if client is disconnected
-                let queuedMessage = MessageQueue.QueuedMessage(content: message, priority: priority, targetID: String(describing: clientID))
+                let queuedMessage = MessageQueue.QueuedMessage(
+                    content: message,
+                    priority: priority,
+                    targetID: String(describing: clientID)
+                )
 
                 // Ensure we have a message queue for this client
                 if self.clientMessageQueues[clientID] == nil {
@@ -533,7 +548,8 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
 
         serverDispatchQueue.sync {
             guard let oldestClientID = connectionQueue.first,
-                  let channel = connectedClients[oldestClientID] else {
+                let channel = connectedClients[oldestClientID]
+            else {
                 return
             }
 
@@ -558,7 +574,8 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     /// - Parameter clientID: The ID of the client to send queued messages to.
     private func sendQueuedMessages(for clientID: ClientID) {
         guard let channel = connectedClients[clientID], channel.isActive,
-              let messageQueue = clientMessageQueues[clientID] else {
+            let messageQueue = clientMessageQueues[clientID]
+        else {
             return
         }
 
@@ -574,7 +591,9 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
                 break
             }
 
-            var buffer = channel.allocator.buffer(capacity: max(configuration.bufferSize, queuedMessage.content.utf8.count + 1))
+            var buffer = channel.allocator.buffer(
+                capacity: max(configuration.bufferSize, queuedMessage.content.utf8.count + 1)
+            )
             buffer.writeString(queuedMessage.content + "\n")
 
             channel.writeAndFlush(buffer, promise: nil)

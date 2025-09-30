@@ -5,7 +5,7 @@ import Foundation
 let serverPort = 1234
 let stressorPort = 2345
 let deterministicPort = 2346  // Dedicated port for deterministic timing test
-let variablePort = 2347       // Dedicated port for variable timing test
+let variablePort = 2347  // Dedicated port for variable timing test
 let shortDelay: UInt64 = 500_000_000  // 0.5 sec
 let oneSecond: UInt64 = 1_000_000_000  // 1 sec
 let twoSeconds: UInt64 = 2_000_000_000  // 2 sec

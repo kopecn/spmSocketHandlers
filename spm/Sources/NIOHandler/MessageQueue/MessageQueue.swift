@@ -204,7 +204,7 @@ public final class MessageQueue: @unchecked Sendable {
 
     private func setupCleanupTimer() {
         cleanupTimer = DispatchSource.makeTimerSource(queue: queue)
-        cleanupTimer?.schedule(deadline: .now() + 60, repeating: .seconds(60)) // Run every minute
+        cleanupTimer?.schedule(deadline: .now() + 60, repeating: .seconds(60))  // Run every minute
         cleanupTimer?.setEventHandler { [weak self] in
             self?.cleanupExpiredMessages()
         }

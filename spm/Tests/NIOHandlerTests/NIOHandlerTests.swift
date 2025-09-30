@@ -78,8 +78,8 @@ func stressorTest_variableTiming() async throws {
     }
 
     let totalMessages = 15000  // Stress test with 15k messages
-    let minLatency: UInt64 = 1_000    // 1us
-    let maxLatency: UInt64 = 100_000   // 100us
+    let minLatency: UInt64 = 1_000  // 1us
+    let maxLatency: UInt64 = 100_000  // 100us
 
     let allMessages = (0..<totalMessages).map { i in "Message_\(String(format: "%04d", i))" }
 
@@ -182,4 +182,3 @@ func basicMessageExchange() async throws {
         print("  \(i + 1): \(message)")
     }
 }
-
