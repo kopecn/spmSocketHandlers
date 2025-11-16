@@ -33,6 +33,9 @@ public struct ServerConfiguration: Sendable {
     /// How long to keep queued messages before expiring them (in seconds). Defaults to 300 (5 minutes).
     public let clientMessageExpirationTime: TimeInterval
 
+    /// The tokenizer string used to split incoming messages. Defaults to "\n".
+    public let tokenizer: String
+
     /// Creates a new ServerConfiguration with the specified parameters.
     ///
     /// - Parameters:
@@ -45,6 +48,7 @@ public struct ServerConfiguration: Sendable {
     ///   - eventLoopThreads: The number of event loop threads to create.
     ///   - clientMessageQueueSize: Maximum number of messages to queue per client when disconnected.
     ///   - clientMessageExpirationTime: How long to keep queued messages before expiring them.
+    ///   - tokenizer: The tokenizer string used to split incoming messages.
     public init(
         bindHost: String = "0.0.0.0",
         maxConnections: Int = 1000,
@@ -54,7 +58,8 @@ public struct ServerConfiguration: Sendable {
         qosClass: QoSClass = .default,
         eventLoopThreads: Int = System.coreCount,
         clientMessageQueueSize: Int = 100,
-        clientMessageExpirationTime: TimeInterval = 300
+        clientMessageExpirationTime: TimeInterval = 300,
+        tokenizer: String = "\n"
     ) {
         self.bindHost = bindHost
         self.maxConnections = maxConnections
@@ -65,6 +70,7 @@ public struct ServerConfiguration: Sendable {
         self.eventLoopThreads = eventLoopThreads
         self.clientMessageQueueSize = clientMessageQueueSize
         self.clientMessageExpirationTime = clientMessageExpirationTime
+        self.tokenizer = tokenizer
     }
 
     /// A default configuration with commonly used settings.

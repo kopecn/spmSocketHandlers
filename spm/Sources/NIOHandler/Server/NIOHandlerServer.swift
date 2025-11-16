@@ -389,7 +389,12 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
                 }
             )
 
-            let stringHandler = NIOStringHandler(self.logger, channel.eventLoop, messageHandler)
+            let stringHandler = NIOStringHandler(
+                self.logger,
+                channel.eventLoop,
+                messageHandler,
+                tokenizer: self.configuration.tokenizer
+            )
 
             try channel.pipeline.syncOperations.addHandler(stringHandler)
             try channel.pipeline.syncOperations.addHandler(stateHandler)

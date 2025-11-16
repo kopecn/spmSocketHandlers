@@ -29,6 +29,9 @@ public struct ClientConfiguration: Sendable {
     /// How long to keep queued messages before expiring them (in seconds). Defaults to 600 (10 minutes).
     public let messageExpirationTime: TimeInterval
 
+    /// The tokenizer string used to split incoming messages. Defaults to "\n".
+    public let tokenizer: String
+
     /// Creates a new ClientConfiguration with the specified parameters.
     ///
     /// - Parameters:
@@ -40,6 +43,7 @@ public struct ClientConfiguration: Sendable {
     ///   - qosClass: The quality of service for the client's dispatch queue.
     ///   - messageQueueSize: Maximum number of messages to queue when disconnected.
     ///   - messageExpirationTime: How long to keep queued messages before expiring them.
+    ///   - tokenizer: The tokenizer string used to split incoming messages.
     public init(
         connectTimeout: TimeInterval = 30.0,
         bufferSize: Int = 1024,
@@ -48,7 +52,8 @@ public struct ClientConfiguration: Sendable {
         enableKeepAlive: Bool = true,
         qosClass: QoSClass = .default,
         messageQueueSize: Int = 500,
-        messageExpirationTime: TimeInterval = 600
+        messageExpirationTime: TimeInterval = 600,
+        tokenizer: String = "\n"
     ) {
         self.connectTimeout = connectTimeout
         self.bufferSize = bufferSize
@@ -58,6 +63,7 @@ public struct ClientConfiguration: Sendable {
         self.qosClass = qosClass
         self.messageQueueSize = messageQueueSize
         self.messageExpirationTime = messageExpirationTime
+        self.tokenizer = tokenizer
     }
 
     /// A default configuration with commonly used settings.

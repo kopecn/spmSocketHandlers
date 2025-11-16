@@ -264,6 +264,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
             }
         )
         let logger = self.logger
+        let tokenizer = self.configuration.tokenizer
 
         let bootstrap = ClientBootstrap(group: group)
             .channelInitializer { [weak self] channel in
@@ -272,7 +273,8 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
                     let handler = NIOStringHandler(
                         logger,
                         channel.eventLoop,
-                        messageHandler
+                        messageHandler,
+                        tokenizer: tokenizer
                     )
 
                     try channel.pipeline.syncOperations.addHandler(handler)
