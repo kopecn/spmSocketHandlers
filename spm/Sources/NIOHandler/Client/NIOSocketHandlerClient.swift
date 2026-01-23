@@ -27,7 +27,7 @@ import SocketCommon
 ///
 /// - Important: Call `shutdown()` explicitly to clean up resources when done.
 ///              The deinitializer will log a warning if shutdown wasn't called.
-public class NIOSocketHandlerClient: MessageSendable, MessageReceivable, @unchecked Sendable {
+public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
 
     // MARK: - Public Properties
 

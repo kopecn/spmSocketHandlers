@@ -22,7 +22,7 @@ import SocketCommon
 /// Use `listen(port:)` to start the server with the server itself as the message handler,
 /// or `listen(port:messageHandler:)` for a custom handler.
 /// Call `shutdown()` to stop it and release resources cleanly.
-public final class NIOSocketHandlerServer: MessageSendable, MessageReceivable, @unchecked Sendable {
+public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
     // MARK: - Public Publishers
     /// Publishes updates about the current listening state of the socket server.
     ///
