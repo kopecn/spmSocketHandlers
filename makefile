@@ -25,6 +25,9 @@ test-netcat-client-only:  ## Run only netcat client integration tests
 test-netcat-server-only:  ## Run only netcat server integration tests
 	RUN_NETCAT_SERVER_TESTS=1 swift test --filter "connectServerToNetCat" --no-parallel
 
+update-packages: ## 
+	swift package update
+
 format:  ## Format code using swift-format with explicit config
 	swift-format --configuration $(CONFIG) format --in-place --recursive spm/Sources
 	swift-format --configuration $(CONFIG) format --in-place --recursive spm/Tests

@@ -4,6 +4,9 @@ import NIOConcurrencyHelpers
 import NIOCore
 import NIOPosix
 import OpenCombine
+
+import FoundationInterfaces
+
 import SocketCommon
 
 /// A TCP socket client handler built using SwiftNIO.
@@ -24,7 +27,8 @@ import SocketCommon
 ///
 /// - Important: Call `shutdown()` explicitly to clean up resources when done.
 ///              The deinitializer will log a warning if shutdown wasn't called.
-public class NIOSocketHandlerClient: @unchecked Sendable {
+public class NIOSocketHandlerClient: MessageSendable, MessageReceivable, @unchecked Sendable {
+
     // MARK: - Public Properties
 
     /// The name identifier for this client instance.
@@ -49,10 +53,14 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     /// Retry management state
     private var retryCount: Int = 0
     private var retryTimer: DispatchSourceTimer?
-    private var lastMessageHandler: MessageHandling?
+    private var lastMessageHandler: MessageReceivable?
 
     /// Message queue for handling messages when disconnected
     private let messageQueue: MessageQueue
+
+    /// Message handler closures for MessageReceivable conformance
+    private var stringMessageHandler: (@Sendable (String) -> Void)?
+    private var dataMessageHandler: (@Sendable (Data) -> Void)?
 
     /// Metrics tracking
     private var messagesSent: Int = 0
@@ -179,6 +187,30 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
         }
     }
 
+    /// Initiates a connection to the specified server using this client as the message handler.
+    ///
+    /// This simplified method uses the client itself as the message handler. Set up message
+    /// handling by calling `setStringMessageHandler(_:)` or `setDataMessageHandler(_:)` before connecting.
+    ///
+    /// - Parameters:
+    ///   - host: The hostname or IP address of the server to connect to.
+    ///   - port: The port number on which the server is listening.
+    ///
+    /// - Note:
+    ///   - This method executes asynchronously on the client's dispatch queue.
+    ///   - The `connectionStatePublisher` will emit `.connecting` immediately,
+    ///     followed by `.connected` upon successful connection, or `.error(err:)` if connection fails.
+    ///   - Connection state changes can be observed through the `connectionStatePublisher`.
+    public func connect(
+        host: String,
+        port: Int
+    ) {
+        socketDispatchQueue.async { [weak self] in
+            guard let self = self else { return }
+            self._connect(host: host, port: port, messageHandler: self)
+        }
+    }
+
     /// Initiates a connection to the specified server.
     ///
     /// This method asynchronously connects to the server at the given host and port,
@@ -187,7 +219,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     /// - Parameters:
     ///   - host: The hostname or IP address of the server to connect to.
     ///   - port: The port number on which the server is listening.
-    ///   - messageHandler: A message handler conforming to `MessageHandling` protocol
+    ///   - messageHandler: A message handler conforming to `MessageReceivable` protocol
     ///                     that will process incoming messages from the server.
     ///
     /// - Note:
@@ -198,7 +230,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     public func connect(
         host: String,
         port: Int,
-        messageHandler: MessageHandling
+        messageHandler: MessageReceivable
     ) {
         socketDispatchQueue.async { [weak self] in
             guard let self = self else { return }
@@ -214,7 +246,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     /// - Parameters:
     ///   - host: The hostname or IP address of the server to connect to.
     ///   - port: The port number on which the server is listening.
-    ///   - messageHandler: A message handler conforming to `MessageHandling` protocol
+    ///   - messageHandler: A message handler conforming to `MessageReceivable` protocol
     ///                     that will process incoming messages from the server.
     ///   - completion: A completion handler called with the result of the connection attempt.
     ///                 `.success(())` indicates successful connection, `.failure(Error)` indicates failure.
@@ -226,7 +258,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     public func connect(
         host: String,
         port: Int,
-        messageHandler: MessageHandling,
+        messageHandler: MessageReceivable,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) {
         socketDispatchQueue.async { [weak self] in
@@ -241,7 +273,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     private func _connect(
         host: String,
         port: Int,
-        messageHandler: MessageHandling,
+        messageHandler: MessageReceivable,
         completion: (@Sendable (Result<Void, Error>) -> Void)? = nil
     ) {
         logger.info("🟢 Attempting to connect to \(host):\(port)")
@@ -356,7 +388,49 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
         }
     }
 
-    /// Sends a string message to the connected server.
+    /// Sends raw binary data to the connected server. Conformance to `MessageSendable`.
+    ///
+    /// - Parameters:
+    ///   - data: The binary data to send to the server.
+    ///   - priority: The priority of the message (higher values have higher priority).
+    ///   - queueIfDisconnected: Whether to queue the data if not connected.
+    ///
+    /// - Returns: `true` if the send was initiated successfully.
+    ///
+    /// - Note:
+    ///   - This method executes asynchronously on the client's dispatch queue.
+    ///   - Data is written directly to the channel buffer without string conversion overhead.
+    ///   - Data queuing is not currently supported; if `queueIfDisconnected` is `true` and
+    ///     the client is disconnected, a warning will be logged.
+    ///   - Unlike `send(_:String:_:)`, no newline terminator is appended to preserve binary integrity.
+    public func send(
+        to id: (any Identifiable)? = nil, 
+        _ data: Data, 
+        _ priority: Int,
+        _ queueIfDisconnected: Bool
+    ) -> Bool {
+        socketDispatchQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            if let channel = self.channel, channel.isActive {
+                // Send immediately if connected - write raw bytes without string conversion
+                var buffer = channel.allocator.buffer(capacity: max(configuration.bufferSize, data.count))
+                buffer.writeBytes(data)
+
+                channel.writeAndFlush(buffer, promise: nil)
+                self.messagesSent += 1
+                self.logger.debug("🔵 Data sent: \(data.count) bytes")
+            } else if queueIfDisconnected {
+                // MessageQueue only supports String content - Data queuing not supported
+                self.logger.warning("⚠️ Data queuing not supported. Message queue only accepts String content.")
+            } else {
+                self.logger.error("🔴 Channel is not connected and message queuing is disabled")
+            }
+        }
+        return true
+    }
+
+    /// Sends a string message to the connected server.  Conformance to 
     ///
     /// - Parameters:
     ///   - message: The string message to send to the server.
@@ -368,7 +442,14 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
     ///   - Messages are automatically terminated with a newline character.
     ///   - If the client is not connected and queueIfDisconnected is true, the message will be queued for later delivery.
     ///   - If the client is not connected and queueIfDisconnected is false, an error will be logged.
-    public func send(_ message: String, priority: Int = 0, queueIfDisconnected: Bool = true) {
+    /// 
+
+    public func send(
+        to id: (any Identifiable)? = nil, 
+        _ message: String, 
+        _ priority: Int = 0, 
+        _ queueIfDisconnected: Bool = false
+    ) -> Bool {
         socketDispatchQueue.async { [weak self] in
             guard let self = self else { return }
 
@@ -390,6 +471,7 @@ public class NIOSocketHandlerClient: @unchecked Sendable {
                 self.logger.error("🔴 Channel is not connected and message queuing is disabled")
             }
         }
+        return true
     }
 
     /// Gets the current number of queued messages waiting to be sent.
@@ -593,5 +675,38 @@ extension NIOSocketHandlerClient: CustomStringConvertible {
     public var description: String {
 
         "\(name):\(String(describing: host)):\(String(describing: port)), state: \(connectionStatePublisher.value)"
+    }
+}
+
+// MARK: - MessageReceivable Conformance
+
+extension NIOSocketHandlerClient {
+    /// Assigns a handler for incoming string messages.
+    ///
+    /// - Parameter handler: The handler to receive string messages, or nil to clear.
+    public func setStringMessageHandler(_ handler: (@Sendable (String) -> Void)?) {
+        socketDispatchQueue.async { [weak self] in
+            self?.stringMessageHandler = handler
+        }
+    }
+
+    /// Assigns a handler for incoming data.
+    ///
+    /// - Parameter handler: The handler to receive data, or nil to clear.
+    public func setDataMessageHandler(_ handler: (@Sendable (Data) -> Void)?) {
+        socketDispatchQueue.async { [weak self] in
+            self?.dataMessageHandler = handler
+        }
+    }
+
+    /// Handles an incoming message asynchronously.
+    ///
+    /// This method is called by the underlying NIO handler when a message is received.
+    /// It increments the messages received counter and invokes the registered string message handler.
+    ///
+    /// - Parameter message: The message to be handled, represented as a `String`.
+    public func handleMessage(_ message: String) async {
+        messagesReceived += 1
+        stringMessageHandler?(message)
     }
 }

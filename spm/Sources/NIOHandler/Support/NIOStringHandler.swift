@@ -1,18 +1,18 @@
+import FoundationInterfaces
 import Logging
 import NIOCore
-import SocketCommon
 
 /// `NIOStringHandler` is a `ChannelInboundHandler` that decodes incoming `ByteBuffer` data into UTF-8 strings,
 /// splitting messages based on a configurable tokenizer (defaulting to newline `\n`). It accumulates partial
 /// reads in an internal buffer, ensuring that messages are only forwarded once fully received. Upon decoding
 /// a complete message, it forwards the string up the pipeline and asynchronously invokes a user-provided
-/// `MessageHandling` instance to process the message. This handler is designed for use with SwiftNIO-based
+/// `MessageReceivable` instance to process the message. This handler is designed for use with SwiftNIO-based
 /// networking applications where line- or token-delimited string protocols are used.
 ///
 /// - Parameters:
 ///   - logger: Logger instance for diagnostic output.
 ///   - eventLoop: The `EventLoop` on which asynchronous message handling is scheduled.
-///   - messageHandler: An object conforming to `MessageHandling` that processes decoded messages.
+///   - messageHandler: An object conforming to `MessageReceivable` that processes decoded messages.
 ///   - tokenizer: The string delimiter used to split incoming data into messages (default: `"\n"`).
 ///
 /// - Important: The tokenizer is assumed to be a single ASCII character. Multi-character or non-ASCII
@@ -21,7 +21,7 @@ import SocketCommon
 /// - Note: The handler accumulates incoming bytes in a buffer to handle cases where messages arrive in
 ///   fragments across multiple reads.
 ///
-/// - SeeAlso: `ChannelInboundHandler`, `ByteBuffer`, `MessageHandling`
+/// - SeeAlso: `ChannelInboundHandler`, `ByteBuffer`, `MessageReceivable`
 ///
 /// A handler that decodes incoming ByteBuffers into UTF-8 strings based on a configurable tokenizer,
 /// and forwards them asynchronously.
@@ -30,7 +30,7 @@ final class NIOStringHandler: ChannelInboundHandler {
     typealias InboundOut = String
 
     private let logger: Logger
-    private let messageHandler: MessageHandling
+    private let messageHandler: MessageReceivable
     private let eventLoop: EventLoop
     private let tokenizer: String
 
@@ -40,7 +40,7 @@ final class NIOStringHandler: ChannelInboundHandler {
     init(
         _ logger: Logger,
         _ eventLoop: EventLoop,
-        _ messageHandler: MessageHandling,
+        _ messageHandler: MessageReceivable,
         tokenizer: String = "\n"
     ) {
         self.logger = logger

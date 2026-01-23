@@ -1,16 +1,28 @@
 import Foundation
-import SocketCommon
+
+import FoundationInterfaces
 
 // MARK: - Message Handler Helper
 
-final class Handler: MessageHandling {
-    private let handler: @Sendable (String) async -> Void
+final class Handler: MessageReceivable, @unchecked Sendable {
+    private var stringHandler: (@Sendable (String) -> Void)?
+    private var dataHandler: (@Sendable (Data) -> Void)?
+    private let asyncHandler: (@Sendable (String) async -> Void)?
 
     init(handler: @Sendable @escaping (String) async -> Void) {
-        self.handler = handler
+        self.asyncHandler = handler
+    }
+
+    func setStringMessageHandler(_ handler: (@Sendable (String) -> Void)?) {
+        stringHandler = handler
+    }
+
+    func setDataMessageHandler(_ handler: (@Sendable (Data) -> Void)?) {
+        dataHandler = handler
     }
 
     func handleMessage(_ message: String) async {
-        await handler(message)
+        stringHandler?(message)
+        await asyncHandler?(message)
     }
 }

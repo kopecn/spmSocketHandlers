@@ -6,7 +6,9 @@ import Foundation
 /// - name: Identifies the client using a string-based name.
 ///
 /// Conforms to `Hashable` and `Sendable` for use in hashed collections and safe concurrency.
-public enum ClientID: Hashable, Sendable {
+public enum ClientID: Hashable, Sendable, Identifiable {
+    public var id: Self { self }
+
     case uuid(UUID)
     case name(String)
 }

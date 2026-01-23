@@ -1,4 +1,5 @@
 import Foundation
+import FoundationInterfaces
 import Logging
 import NIOConcurrencyHelpers
 import NIOCore
@@ -18,9 +19,10 @@ import SocketCommon
 /// - Whether the server is currently listening
 /// - The set of connected clients
 ///
-/// Use `listen(port:messageHandler:)` to start the server,
-/// and `shutdown()` to stop it and release resources cleanly.
-public final class NIOSocketHandlerServer: @unchecked Sendable {
+/// Use `listen(port:)` to start the server with the server itself as the message handler,
+/// or `listen(port:messageHandler:)` for a custom handler.
+/// Call `shutdown()` to stop it and release resources cleanly.
+public final class NIOSocketHandlerServer: MessageSendable, MessageReceivable, @unchecked Sendable {
     // MARK: - Public Publishers
     /// Publishes updates about the current listening state of the socket server.
     ///
@@ -33,9 +35,9 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
 
     /// Publishes the set of currently connected client IDs.
     ///
-    /// This publisher emits a `Set` of `ClientID` values representing all clients currently connected to the server.
+    /// This publisher emits a `Set` of `AnyHashable` values representing all clients currently connected to the server.
     /// Subscribers can observe this publisher to be notified whenever clients connect or disconnect.
-    public let connectedClientIDsPublisher = CurrentValueSubject<Set<ClientID>, Never>([])
+    public let connectedClientIDsPublisher = CurrentValueSubject<Set<AnyHashable>, Never>([])
 
     // MARK: - Internal Properties
 
@@ -61,17 +63,24 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     private var listenerChannel: Channel?
 
     /// A dictionary mapping client identifiers to their corresponding channels.
-    private var connectedClients: [ClientID: Channel] = [:]
+    private var connectedClients: [AnyHashable: Channel] = [:]
 
     /// The identifier of the most recently connected client.
-    private var lastID: ClientID?
+    private var lastID: (any Identifiable)?
 
     /// Connection pool management
-    private var connectionQueue: [ClientID] = []  // FIFO queue for connection order
-    private var connectionCountByClient: [ClientID: Int] = [:]  // Track messages per client
+    private var connectionQueue: [AnyHashable] = []  // FIFO queue for connection order
+    private var connectionCountByClient: [AnyHashable: Int] = [:]  // Track messages per client
 
     /// Message queues per client for handling offline message delivery
-    private var clientMessageQueues: [ClientID: MessageQueue] = [:]
+    private var clientMessageQueues: [AnyHashable: MessageQueue] = [:]
+
+    /// Message handler closures for MessageReceivable conformance
+    private var stringMessageHandler: (@Sendable (String) -> Void)?
+    private var dataMessageHandler: (@Sendable (Data) -> Void)?
+
+    /// Metrics tracking
+    private var messagesReceived: Int = 0
 
     /// Initializes a new `NIOSocketHandlerServer` instance.
     ///
@@ -113,7 +122,38 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
         logger.info("NIOSocketHandlerServer deinitialized. Call shutdown() explicitly to clean up.")
     }
 
+    // MARK: - Helpers
+
+    /// Converts any Identifiable to an AnyHashable key using its id.
+    private func makeKey(from identifiable: any Identifiable) -> AnyHashable {
+        func helper<T: Identifiable>(_ value: T) -> AnyHashable {
+            return AnyHashable(value.id)
+        }
+        return helper(identifiable)
+    }
+
     // MARK: - Public API
+
+    /// Starts the server listening on the specified port using this server as the message handler.
+    ///
+    /// This simplified method uses the server itself as the message handler. Set up message
+    /// handling by calling `setStringMessageHandler(_:)` or `setDataMessageHandler(_:)` before listening.
+    ///
+    /// - Parameters:
+    ///   - port: The port number on which to listen for incoming connections.
+    ///   - defaultHost: The default host address the server binds to. Defaults to configuration value.
+    ///
+    /// - Note:
+    ///   - This method executes asynchronously on the server's dispatch queue.
+    ///   - The `serverConnectionStatePublisher` will emit `.listening` upon successful binding,
+    ///     or `.error(err:)` if binding fails.
+    ///   - Use `"0.0.0.0"` or `"::"` to bind to all available interfaces (IPv4 or IPv6 respectively).
+    public func listen(
+        port: Int,
+        defaultHost: String? = nil
+    ) {
+        listen(port: port, messageHandler: self, defaultHost: defaultHost)
+    }
 
     /// Starts the server listening on the specified port.
     ///
@@ -122,7 +162,7 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     ///
     /// - Parameters:
     ///   - port: The port number on which to listen for incoming connections.
-    ///   - messageHandler: A message handler conforming to `MessageHandling` protocol
+    ///   - messageHandler: A message handler conforming to `MessageReceivable` protocol
     ///                     that will process incoming messages from connected clients.
     ///   - defaultHost: The default host address the server binds to when calling `listen(port:messageHandler:)`.
     ///                  This can be an IPv4 or IPv6 address, e.g., `"127.0.0.1"` or `"::1"`. Defaults to `"::1"` (IPv6 localhost).
@@ -135,7 +175,7 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     ///   - Use `"0.0.0.0"` or `"::"` to bind to all available interfaces (IPv4 or IPv6 respectively).
     public func listen(
         port: Int,
-        messageHandler: MessageHandling,
+        messageHandler: MessageReceivable,
         defaultHost: String? = nil
     ) {
         let host = defaultHost ?? configuration.bindHost
@@ -184,20 +224,31 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
         }
     }
 
-    /// Sends a message to a specific client or the most recently connected client.
+    /// Sends raw binary data to a specific client or the most recently connected client.
+    /// Conformance to `MessageSendable`.
     ///
     /// - Parameters:
-    ///   - message: The string message to send to the client.
-    ///   - id: The specific client ID to send the message to. If nil, the message
+    ///   - id: The specific client ID to send the data to. If nil, the data
     ///         will be sent to the most recently connected client.
-    ///   - priority: The priority of the message (higher values have higher priority). Defaults to 0.
-    ///   - queueIfDisconnected: Whether to queue the message if the client is not connected. Defaults to true.
+    ///   - data: The binary data to send to the client.
+    ///   - priority: The priority of the message (higher values have higher priority).
+    ///   - queueIfDisconnected: Whether to queue the data if the client is not connected.
     ///
-    /// - Note: This method executes asynchronously on the server's dispatch queue.
-    ///         If the specified client is not connected and queueIfDisconnected is true,
-    ///         the message will be queued for delivery when the client reconnects.
-    ///         Messages are automatically terminated with a newline character.
-    public func send(_ message: String, to id: ClientID? = nil, priority: Int = 0, queueIfDisconnected: Bool = true) {
+    /// - Returns: `true` if the send was initiated successfully.
+    ///
+    /// - Note:
+    ///   - This method executes asynchronously on the server's dispatch queue.
+    ///   - Data is written directly to the channel buffer without string conversion overhead.
+    ///   - Data queuing is not currently supported; if `queueIfDisconnected` is `true` and
+    ///     the client is disconnected, a warning will be logged.
+    ///   - Unlike `send(_:String:_:_:)`, no newline terminator is appended to preserve binary integrity.
+    @discardableResult
+    public func send(
+        to id: (any Identifiable)? = nil,
+        _ data: Data,
+        _ priority: Int,
+        _ queueIfDisconnected: Bool
+    ) -> Bool {
         serverDispatchQueue.async { [weak self] in
             guard let self = self else { return }
             guard let clientID = id ?? self.lastID else {
@@ -205,7 +256,59 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
                 return
             }
 
-            if let channel = self.connectedClients[clientID], channel.isActive {
+            let key = self.makeKey(from: clientID)
+
+            if let channel = self.connectedClients[key], channel.isActive {
+                // Send immediately if client is connected - write raw bytes without string conversion
+                var buffer = channel.allocator.buffer(capacity: max(self.configuration.bufferSize, data.count))
+                buffer.writeBytes(data)
+
+                channel.writeAndFlush(buffer, promise: nil)
+                self.logger.debug("🔵 Data sent to client \(key): \(data.count) bytes")
+                self.connectionCountByClient[key] = (self.connectionCountByClient[key] ?? 0) + 1
+            } else if queueIfDisconnected {
+                // MessageQueue only supports String content - Data queuing not supported
+                self.logger.warning("⚠️ Data queuing not supported. Message queue only accepts String content.")
+            } else {
+                self.logger.error("🔴 Client \(key) is not connected and message queuing is disabled.")
+            }
+        }
+        return true
+    }
+
+    /// Sends a message to a specific client or the most recently connected client.
+    /// Conformance to `MessageSendable`.
+    ///
+    /// - Parameters:
+    ///   - id: The specific client ID to send the message to. If nil, the message
+    ///         will be sent to the most recently connected client.
+    ///   - message: The string message to send to the client.
+    ///   - priority: The priority of the message (higher values have higher priority). Defaults to 0.
+    ///   - queueIfDisconnected: Whether to queue the message if the client is not connected. Defaults to true.
+    ///
+    /// - Returns: `true` if the send was initiated successfully.
+    ///
+    /// - Note: This method executes asynchronously on the server's dispatch queue.
+    ///         If the specified client is not connected and queueIfDisconnected is true,
+    ///         the message will be queued for delivery when the client reconnects.
+    ///         Messages are automatically terminated with a newline character.
+    @discardableResult
+    public func send(
+        to id: (any Identifiable)? = nil,
+        _ message: String,
+        _ priority: Int = 0,
+        _ queueIfDisconnected: Bool = true
+    ) -> Bool {
+        serverDispatchQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard let clientID = id ?? self.lastID else {
+                self.logger.error("🔴 No client ID provided and no last connected client available.")
+                return
+            }
+
+            let key = self.makeKey(from: clientID)
+
+            if let channel = self.connectedClients[key], channel.isActive {
                 // Send immediately if client is connected
                 var buffer = channel.allocator.buffer(
                     capacity: max(self.configuration.bufferSize, message.utf8.count + 1)
@@ -213,36 +316,37 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
                 buffer.writeString(message + "\n")
                 channel.writeAndFlush(buffer, promise: nil)
 
-                self.logger.debug("🔵 Sent message to client \(clientID): \(message)")
-                self.connectionCountByClient[clientID] = (self.connectionCountByClient[clientID] ?? 0) + 1
+                self.logger.debug("🔵 Sent message to client \(key): \(message)")
+                self.connectionCountByClient[key] = (self.connectionCountByClient[key] ?? 0) + 1
             } else if queueIfDisconnected {
                 // Queue for later delivery if client is disconnected
                 let queuedMessage = MessageQueue.QueuedMessage(
                     content: message,
                     priority: priority,
-                    targetID: String(describing: clientID)
+                    targetID: String(describing: key)
                 )
 
                 // Ensure we have a message queue for this client
-                if self.clientMessageQueues[clientID] == nil {
+                if self.clientMessageQueues[key] == nil {
                     let queueConfig = MessageQueue.Configuration(
                         maxQueueSize: self.configuration.clientMessageQueueSize,
                         persistToDisk: false,
                         messageExpirationTime: self.configuration.clientMessageExpirationTime,
                         persistencePath: nil
                     )
-                    self.clientMessageQueues[clientID] = MessageQueue(configuration: queueConfig)
+                    self.clientMessageQueues[key] = MessageQueue(configuration: queueConfig)
                 }
 
-                if self.clientMessageQueues[clientID]?.enqueue(queuedMessage) == true {
-                    self.logger.info("📥 Message queued for client \(clientID): \(message)")
+                if self.clientMessageQueues[key]?.enqueue(queuedMessage) == true {
+                    self.logger.info("📥 Message queued for client \(key): \(message)")
                 } else {
-                    self.logger.warning("⚠️ Failed to queue message for client \(clientID) (queue full): \(message)")
+                    self.logger.warning("⚠️ Failed to queue message for client \(key) (queue full): \(message)")
                 }
             } else {
-                self.logger.error("🔴 Client \(clientID) is not connected and message queuing is disabled.")
+                self.logger.error("🔴 Client \(key) is not connected and message queuing is disabled.")
             }
         }
+        return true
     }
 
     /// Stops the server from accepting new connections while keeping existing connections active.
@@ -334,7 +438,7 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     /// - Note: If setup fails, the future will fail with the encountered error.
     private func setupChildChannel(
         _ channel: Channel,
-        messageHandler: MessageHandling
+        messageHandler: MessageReceivable
     )
         -> EventLoopFuture<Void>
     {
@@ -356,10 +460,11 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
         }
 
         let clientID = ClientID.uuid(UUID())
+        let key = makeKey(from: clientID)
         self.lastID = clientID
-        self.connectedClients[clientID] = channel
-        self.connectionQueue.append(clientID)
-        self.connectionCountByClient[clientID] = 0
+        self.connectedClients[key] = channel
+        self.connectionQueue.append(key)
+        self.connectionCountByClient[key] = 0
 
         // Create a message queue for this client
         let queueConfig = MessageQueue.Configuration(
@@ -368,15 +473,15 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
             messageExpirationTime: self.configuration.clientMessageExpirationTime,
             persistencePath: nil
         )
-        self.clientMessageQueues[clientID] = MessageQueue(configuration: queueConfig)
+        self.clientMessageQueues[key] = MessageQueue(configuration: queueConfig)
 
-        self.addConnectedClient(clientID)
+        self.addConnectedClient(key)
 
         // Send any queued messages for this client
-        sendQueuedMessages(for: clientID)
+        sendQueuedMessages(for: key)
 
         channel.closeFuture.whenComplete { [weak self] _ in
-            self?.handleClientDisconnection(clientID)
+            self?.handleClientDisconnection(key)
         }
 
         do {
@@ -413,28 +518,28 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     /// 3. Clearing the last client ID if it matches the disconnected client
     /// 4. Logging the disconnection event
     ///
-    /// - Parameter clientID: The unique identifier of the client that disconnected.
+    /// - Parameter key: The unique identifier key of the client that disconnected.
     ///
     /// - Note: This method executes on the server's dispatch queue to ensure thread safety.
-    private func handleClientDisconnection(_ clientID: ClientID) {
+    private func handleClientDisconnection(_ key: AnyHashable) {
         serverDispatchQueue.async {
-            self.connectedClients.removeValue(forKey: clientID)
-            self.removeConnectedClient(clientID)
+            self.connectedClients.removeValue(forKey: key)
+            self.removeConnectedClient(key)
 
             // Clean up connection pool management state
-            if let index = self.connectionQueue.firstIndex(of: clientID) {
+            if let index = self.connectionQueue.firstIndex(of: key) {
                 self.connectionQueue.remove(at: index)
             }
-            self.connectionCountByClient.removeValue(forKey: clientID)
+            self.connectionCountByClient.removeValue(forKey: key)
 
             // Note: We don't remove the message queue here to preserve offline messages
             // The queue will be cleaned up naturally through expiration or when the client reconnects
 
-            if self.lastID == clientID {
-                // Set last ID to the most recent client in the queue
-                self.lastID = self.connectionQueue.last
+            if let lastID = self.lastID, self.makeKey(from: lastID) == key {
+                // Set last ID to nil - we can't easily convert AnyHashable back to Identifiable
+                self.lastID = nil
             }
-            self.logger.info("🟢 Client \(clientID) disconnected")
+            self.logger.info("🟢 Client \(key) disconnected")
         }
     }
 
@@ -443,13 +548,13 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     /// This method updates both the connected clients publisher and the server connection state publisher
     /// to reflect the new client connection.
     ///
-    /// - Parameter id: The unique identifier of the newly connected client.
+    /// - Parameter key: The unique identifier key of the newly connected client.
     ///
     /// - Note: The server connection state will be updated to `.activeConnections` to indicate
     ///         that the server now has active client connections.
-    private func addConnectedClient(_ id: ClientID) {
+    private func addConnectedClient(_ key: AnyHashable) {
         var current = connectedClientIDsPublisher.value
-        current.insert(id)
+        current.insert(key)
         connectedClientIDsPublisher.send(current)
 
         serverConnectionStatePublisher.send(.activeConnections)
@@ -460,13 +565,13 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     /// This method updates the connected clients publisher and adjusts the server connection state
     /// based on whether any clients remain connected.
     ///
-    /// - Parameter id: The unique identifier of the client to remove.
+    /// - Parameter key: The unique identifier key of the client to remove.
     ///
     /// - Note: If no clients remain connected after removal, the server connection state
     ///         will be updated to `.listening` to indicate the server is waiting for connections.
-    private func removeConnectedClient(_ id: ClientID) {
+    private func removeConnectedClient(_ key: AnyHashable) {
         var current = connectedClientIDsPublisher.value
-        current.remove(id)
+        current.remove(key)
         connectedClientIDsPublisher.send(current)
 
         if connectedClients.isEmpty {
@@ -546,27 +651,27 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     /// This method can be used when implementing custom connection management policies.
     /// It disconnects the client that has been connected the longest.
     ///
-    /// - Returns: The ID of the disconnected client, or nil if no clients are connected.
+    /// - Returns: The ID key of the disconnected client, or nil if no clients are connected.
     @discardableResult
-    public func disconnectOldestClient() -> ClientID? {
-        var disconnectedClient: ClientID?
+    public func disconnectOldestClient() -> AnyHashable? {
+        var disconnectedClient: AnyHashable?
 
         serverDispatchQueue.sync {
-            guard let oldestClientID = connectionQueue.first,
-                let channel = connectedClients[oldestClientID]
+            guard let oldestClientKey = connectionQueue.first,
+                let channel = connectedClients[oldestClientKey]
             else {
                 return
             }
 
-            disconnectedClient = oldestClientID
-            logger.info("🔄 Disconnecting oldest client \(oldestClientID) to make room for new connections")
+            disconnectedClient = oldestClientKey
+            logger.info("🔄 Disconnecting oldest client \(oldestClientKey) to make room for new connections")
 
             channel.close().whenComplete { [weak self] result in
                 switch result {
                 case .success:
-                    self?.logger.info("🟢 Successfully disconnected oldest client \(oldestClientID)")
+                    self?.logger.info("🟢 Successfully disconnected oldest client \(oldestClientKey)")
                 case .failure(let error):
-                    self?.logger.warning("⚠️ Error disconnecting oldest client \(oldestClientID): \(error)")
+                    self?.logger.warning("⚠️ Error disconnecting oldest client \(oldestClientKey): \(error)")
                 }
             }
         }
@@ -576,10 +681,10 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
 
     /// Sends queued messages for a specific client when they reconnect.
     ///
-    /// - Parameter clientID: The ID of the client to send queued messages to.
-    private func sendQueuedMessages(for clientID: ClientID) {
-        guard let channel = connectedClients[clientID], channel.isActive,
-            let messageQueue = clientMessageQueues[clientID]
+    /// - Parameter key: The ID key of the client to send queued messages to.
+    private func sendQueuedMessages(for key: AnyHashable) {
+        guard let channel = connectedClients[key], channel.isActive,
+            let messageQueue = clientMessageQueues[key]
         else {
             return
         }
@@ -587,7 +692,7 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
         let queueCount = messageQueue.count
         guard queueCount > 0 else { return }
 
-        logger.info("📤 Sending \(queueCount) queued messages to client \(clientID)")
+        logger.info("📤 Sending \(queueCount) queued messages to client \(key)")
 
         while let queuedMessage = messageQueue.dequeue() {
             guard channel.isActive else {
@@ -602,15 +707,15 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
             buffer.writeString(queuedMessage.content + "\n")
 
             channel.writeAndFlush(buffer, promise: nil)
-            logger.debug("📤 Queued message sent to client \(clientID): \(queuedMessage.content)")
-            connectionCountByClient[clientID] = (connectionCountByClient[clientID] ?? 0) + 1
+            logger.debug("📤 Queued message sent to client \(key): \(queuedMessage.content)")
+            connectionCountByClient[key] = (connectionCountByClient[key] ?? 0) + 1
         }
 
         let remainingCount = messageQueue.count
         if remainingCount == 0 {
-            logger.info("✅ All queued messages sent to client \(clientID)")
+            logger.info("✅ All queued messages sent to client \(key)")
         } else {
-            logger.warning("⚠️ \(remainingCount) messages remain in queue for client \(clientID) after connection lost")
+            logger.warning("⚠️ \(remainingCount) messages remain in queue for client \(key) after connection lost")
         }
     }
 
@@ -618,9 +723,10 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     ///
     /// - Parameter clientID: The ID of the client.
     /// - Returns: The number of queued messages for the client.
-    public func getQueuedMessageCount(for clientID: ClientID) -> Int {
+    public func getQueuedMessageCount(for clientID: any Identifiable) -> Int {
+        let key = makeKey(from: clientID)
         return serverDispatchQueue.sync {
-            return clientMessageQueues[clientID]?.count ?? 0
+            return clientMessageQueues[key]?.count ?? 0
         }
     }
 
@@ -629,12 +735,13 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
     /// - Parameter clientID: The ID of the client.
     /// - Returns: The number of messages that were cleared.
     @discardableResult
-    public func clearQueuedMessages(for clientID: ClientID) -> Int {
+    public func clearQueuedMessages(for clientID: any Identifiable) -> Int {
+        let key = makeKey(from: clientID)
         return serverDispatchQueue.sync {
-            guard let messageQueue = clientMessageQueues[clientID] else { return 0 }
+            guard let messageQueue = clientMessageQueues[key] else { return 0 }
             let count = messageQueue.count
             messageQueue.clear()
-            logger.info("🗑️ Cleared \(count) queued messages for client \(clientID)")
+            logger.info("🗑️ Cleared \(count) queued messages for client \(key)")
             return count
         }
     }
@@ -669,5 +776,38 @@ public final class NIOSocketHandlerServer: @unchecked Sendable {
         } catch {
             logger.error("🔴 Failed to shut down EventLoopGroup: \(error)")
         }
+    }
+}
+
+// MARK: - MessageReceivable Conformance
+
+extension NIOSocketHandlerServer {
+    /// Assigns a handler for incoming string messages.
+    ///
+    /// - Parameter handler: The handler to receive string messages, or nil to clear.
+    public func setStringMessageHandler(_ handler: (@Sendable (String) -> Void)?) {
+        serverDispatchQueue.async { [weak self] in
+            self?.stringMessageHandler = handler
+        }
+    }
+
+    /// Assigns a handler for incoming data.
+    ///
+    /// - Parameter handler: The handler to receive data, or nil to clear.
+    public func setDataMessageHandler(_ handler: (@Sendable (Data) -> Void)?) {
+        serverDispatchQueue.async { [weak self] in
+            self?.dataMessageHandler = handler
+        }
+    }
+
+    /// Handles an incoming message asynchronously.
+    ///
+    /// This method is called by the underlying NIO handler when a message is received from any client.
+    /// It increments the messages received counter and invokes the registered string message handler.
+    ///
+    /// - Parameter message: The message to be handled, represented as a `String`.
+    public func handleMessage(_ message: String) async {
+        messagesReceived += 1
+        stringMessageHandler?(message)
     }
 }

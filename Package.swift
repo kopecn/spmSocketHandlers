@@ -16,6 +16,7 @@ let package = Package(
         ),
     ],
     dependencies: [
+        .package(url: "git@github.com:kopecn/spmFoundationTools.git", branch: "dev"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
         .package(url: "https://github.com/daikimat/depermaid.git", from: "1.1.0"),
@@ -28,6 +29,7 @@ let package = Package(
             name: "NIOHandler",
             dependencies: [
                 "SocketCommon",
+                .product(name: "FoundationInterfaces", package: "spmFoundationTools"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "Logging", package: "swift-log"),
