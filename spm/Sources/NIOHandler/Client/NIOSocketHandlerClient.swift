@@ -1,12 +1,10 @@
 import Foundation
+import FoundationInterfaces
 import Logging
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOPosix
 import OpenCombine
-
-import FoundationInterfaces
-
 import SocketCommon
 
 /// A TCP socket client handler built using SwiftNIO.
@@ -404,8 +402,8 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
     ///     the client is disconnected, a warning will be logged.
     ///   - Unlike `send(_:String:_:)`, no newline terminator is appended to preserve binary integrity.
     public func send(
-        to id: (any Identifiable)? = nil, 
-        _ data: Data, 
+        to id: (any Identifiable)? = nil,
+        _ data: Data,
         _ priority: Int,
         _ queueIfDisconnected: Bool
     ) -> Bool {
@@ -430,7 +428,7 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
         return true
     }
 
-    /// Sends a string message to the connected server.  Conformance to 
+    /// Sends a string message to the connected server.  Conformance to
     ///
     /// - Parameters:
     ///   - message: The string message to send to the server.
@@ -442,12 +440,12 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
     ///   - Messages are automatically terminated with a newline character.
     ///   - If the client is not connected and queueIfDisconnected is true, the message will be queued for later delivery.
     ///   - If the client is not connected and queueIfDisconnected is false, an error will be logged.
-    /// 
+    ///
 
     public func send(
-        to id: (any Identifiable)? = nil, 
-        _ message: String, 
-        _ priority: Int = 0, 
+        to id: (any Identifiable)? = nil,
+        _ message: String,
+        _ priority: Int = 0,
         _ queueIfDisconnected: Bool = false
     ) -> Bool {
         socketDispatchQueue.async { [weak self] in
