@@ -4,8 +4,9 @@
 A Swift Package Manager library providing a lightweight SwiftNIO wrapper for ASCII/text-based TCP socket communication. Exposes `NIOSocketHandlerServer` and `NIOSocketHandlerClient` as the primary public API surface, built on top of Apple's SwiftNIO for high-performance async networking.
 
 **Package name:** `SocketHandlers`
+**Library product:** `NIOHandler` (the exported library target name)
 **Swift tools version:** 6.1
-**Minimum platform:** macOS 14
+**Declared platform:** macOS 14 (Linux ARM/x86 is a required deployment target — `Package.swift` needs updating; see `todo.md`)
 **License:** MIT
 
 ## Architecture
@@ -36,9 +37,15 @@ SocketHandlers (Package)
 │   ├── SocketHandlerError.swift            — Error enum
 │   └── ClientID.swift                      — UUID | name identifier (Hashable, Identifiable)
 └── SocketHandlersTests (Test target)
-    ├── NIOHandlerTests.swift               — Stress tests (deterministic + variable timing)
-    ├── NIOHandlerNetCatTests.swift          — Integration tests (netcat-based, env-gated)
-    └── Support/                            — Test helpers, metrics, collectors
+    ├── NIOHandlerTests.swift               — Stress tests (deterministic + variable timing) + basicMessageExchange
+    ├── NIOHandlerNetCatTests.swift          — Integration tests (netcat-based, env-gated); NOTE: netcatEchoTest() is dead code (early return)
+    └── Support/
+        ├── TestConfiguration.swift         — Hardcoded ports (1234, 2345-2347) and timing constants
+        ├── TestMetrics.swift               — Codable metrics struct (name, duration, throughput, counts)
+        ├── Handler.swift                   — MessageReceivable test double (@unchecked Sendable)
+        ├── MessageCollector.swift          — Actor-based thread-safe message accumulator
+        ├── TaskFunctions.swift             — Async send/receive helpers (deterministic + variable latency)
+        └── MetricsUtilities.swift          — saveMetrics(), timeIt(), timeItWithDuration() utilities
 ```
 
 ### External Dependencies
@@ -71,12 +78,17 @@ SocketHandlers (Package)
 
 ### Commands
 ```bash
-make build          # swift build -c release
-make test           # swift test --no-parallel
-make format         # swift-format with .swift-format.json config
-make mermaid        # Generate dependency graph
-make clean          # Remove .build/
-make bump-patch     # Tag and push version bump
+make build                    # swift build -c release
+make test                     # swift test --no-parallel
+make test-netcat-client-only  # RUN_NETCAT_CLIENT_TESTS=1 swift test (env-gated integration)
+make test-netcat-server-only  # RUN_NETCAT_SERVER_TESTS=1 swift test (env-gated integration)
+make format                   # swift-format with .swift-format.json config
+make mermaid                  # Generate dependency graph
+make clean                    # Remove .build/
+make bump-patch               # Tag and push patch version bump
+make bump-minor               # Tag and push minor version bump
+make bump-major               # Tag and push major version bump
+make release                  # clean → build → test full release flow
 ```
 
 ### Formatting
@@ -87,9 +99,10 @@ make bump-patch     # Tag and push version bump
 
 ### Testing
 - Tests use Swift Testing (`@Test`) framework, not XCTest assertions
-- `--no-parallel` required (tests bind to fixed ports)
+- `--no-parallel` required (tests bind to fixed ports: 1234, 2345, 2346, 2347)
 - Netcat tests are env-gated: `RUN_NETCAT_CLIENT_TESTS=1` / `RUN_NETCAT_SERVER_TESTS=1`
 - Stress tests validate 10k-15k message throughput with deterministic and variable timing
+- `netcatEchoTest()` contains an early `return` and is dead code — do not rely on it
 
 ### Conventions
 - Emoji prefixed log messages for visual scanning in console output
@@ -142,6 +155,7 @@ Internal extractions only — public API surface stays as-is.
       could be replaced with an actor or locked value box.
 - [ ] **Make `NIOClientConnectionStateHandler` `final`** — it's a channel handler with no
       subclassing intent; `final` enables compiler optimizations and cleaner Sendable conformance.
+- [ ] **Make `NIOServerConnectionStateHandler` `final`** — same reasoning as client state handler.
 
 ### Determinism
 - [ ] **Replace `Date()` with monotonic time** in `MessageQueue` expiration logic. Use
