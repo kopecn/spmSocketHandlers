@@ -527,6 +527,7 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
     ///
     /// - Note: This method executes on the server's dispatch queue to ensure thread safety.
     private func handleClientDisconnection(_ key: AnyHashable) {
+        let keyDescription = String(describing: key)
         serverDispatchQueue.async {
             self.connectedClients.removeValue(forKey: key)
             self.removeConnectedClient(key)
@@ -544,7 +545,7 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
                 // Set last ID to nil - we can't easily convert AnyHashable back to Identifiable
                 self.lastID = nil
             }
-            self.logger.info("🟢 Client \(key) disconnected")
+            self.logger.info("🟢 Client \(keyDescription) disconnected")
         }
     }
 
@@ -614,12 +615,13 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
     ///         This ensures that the server can complete shutdown even if some client disconnections fail.
     private func closeAllClients() {
         for (id, channel) in self.connectedClients {
+            let idDescription = String(describing: id)
             channel.close().whenComplete { [weak self] result in
                 switch result {
                 case .success:
-                    self?.logger.info("🟢 Closed connection to client \(id)")
+                    self?.logger.info("🟢 Closed connection to client \(idDescription)")
                 case .failure(let error):
-                    self?.logger.warning("⚠️ Error closing client \(id): \(error)")
+                    self?.logger.warning("⚠️ Error closing client \(idDescription): \(error)")
                 }
             }
         }
@@ -669,14 +671,15 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
             }
 
             disconnectedClient = oldestClientKey
-            logger.info("🔄 Disconnecting oldest client \(oldestClientKey) to make room for new connections")
+            let keyDescription = String(describing: oldestClientKey)
+            logger.info("🔄 Disconnecting oldest client \(keyDescription) to make room for new connections")
 
             channel.close().whenComplete { [weak self] result in
                 switch result {
                 case .success:
-                    self?.logger.info("🟢 Successfully disconnected oldest client \(oldestClientKey)")
+                    self?.logger.info("🟢 Successfully disconnected oldest client \(keyDescription)")
                 case .failure(let error):
-                    self?.logger.warning("⚠️ Error disconnecting oldest client \(oldestClientKey): \(error)")
+                    self?.logger.warning("⚠️ Error disconnecting oldest client \(keyDescription): \(error)")
                 }
             }
         }
