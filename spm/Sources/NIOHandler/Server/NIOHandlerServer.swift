@@ -442,7 +442,9 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
     )
         -> EventLoopFuture<Void>
     {
-        // Check if we've reached the maximum connection limit
+        // Approximate max-connections guard. This read races with serverDispatchQueue mutations
+        // by a narrow window, but blocking the event loop with sync is worse. Over-acceptance
+        // of one extra connection in a race is acceptable for this soft limit.
         if connectedClients.count >= configuration.maxConnections {
             logger.warning("🔴 Maximum connections (\(configuration.maxConnections)) reached. Rejecting new connection.")
 
@@ -461,24 +463,27 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
 
         let clientID = ClientID.uuid(UUID())
         let key = makeKey(from: clientID)
-        self.lastID = clientID
-        self.connectedClients[key] = channel
-        self.connectionQueue.append(key)
-        self.connectionCountByClient[key] = 0
 
-        // Create a message queue for this client
-        let queueConfig = MessageQueue.Configuration(
-            maxQueueSize: self.configuration.clientMessageQueueSize,
-            persistToDisk: false,
-            messageExpirationTime: self.configuration.clientMessageExpirationTime,
-            persistencePath: nil
-        )
-        self.clientMessageQueues[key] = MessageQueue(configuration: queueConfig)
+        // All mutable server state is owned by serverDispatchQueue; dispatch mutations there.
+        // The pipeline setup below must stay on the event loop thread.
+        serverDispatchQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.lastID = clientID
+            self.connectedClients[key] = channel
+            self.connectionQueue.append(key)
+            self.connectionCountByClient[key] = 0
 
-        self.addConnectedClient(key)
+            let queueConfig = MessageQueue.Configuration(
+                maxQueueSize: self.configuration.clientMessageQueueSize,
+                persistToDisk: false,
+                messageExpirationTime: self.configuration.clientMessageExpirationTime,
+                persistencePath: nil
+            )
+            self.clientMessageQueues[key] = MessageQueue(configuration: queueConfig)
 
-        // Send any queued messages for this client
-        sendQueuedMessages(for: key)
+            self.addConnectedClient(key)
+            self.sendQueuedMessages(for: key)
+        }
 
         channel.closeFuture.whenComplete { [weak self] _ in
             self?.handleClientDisconnection(key)
