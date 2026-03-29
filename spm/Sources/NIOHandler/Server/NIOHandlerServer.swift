@@ -812,7 +812,10 @@ extension NIOSocketHandlerServer {
     ///
     /// - Parameter message: The message to be handled, represented as a `String`.
     public func handleMessage(_ message: String) async {
-        messagesReceived += 1
-        stringMessageHandler?(message)
+        serverDispatchQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.messagesReceived += 1
+            self.stringMessageHandler?(message)
+        }
     }
 }
