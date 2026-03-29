@@ -295,6 +295,7 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
         )
         let logger = self.logger
         let tokenizer = self.configuration.tokenizer
+        let maxCumulationBufferSize = self.configuration.maxCumulationBufferSize
 
         let bootstrap = ClientBootstrap(group: group)
             .channelInitializer { [weak self] channel in
@@ -304,7 +305,8 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
                         logger,
                         channel.eventLoop,
                         messageHandler,
-                        tokenizer: tokenizer
+                        tokenizer: tokenizer,
+                        maxBufferSize: maxCumulationBufferSize
                     )
 
                     try channel.pipeline.syncOperations.addHandler(handler)

@@ -36,6 +36,11 @@ public struct ServerConfiguration: Sendable {
     /// The tokenizer string used to split incoming messages. Defaults to "\n".
     public let tokenizer: String
 
+    /// Maximum number of bytes allowed in the cumulation buffer before the connection is closed.
+    /// Protects against unbounded memory growth from peers that never send the delimiter.
+    /// Defaults to 1 MB (1_048_576 bytes).
+    public let maxCumulationBufferSize: Int
+
     /// Creates a new ServerConfiguration with the specified parameters.
     ///
     /// - Parameters:
@@ -49,6 +54,7 @@ public struct ServerConfiguration: Sendable {
     ///   - clientMessageQueueSize: Maximum number of messages to queue per client when disconnected.
     ///   - clientMessageExpirationTime: How long to keep queued messages before expiring them.
     ///   - tokenizer: The tokenizer string used to split incoming messages.
+    ///   - maxCumulationBufferSize: Maximum bytes in the cumulation buffer before closing the connection.
     public init(
         bindHost: String = "0.0.0.0",
         maxConnections: Int = 1000,
@@ -59,7 +65,8 @@ public struct ServerConfiguration: Sendable {
         eventLoopThreads: Int = System.coreCount,
         clientMessageQueueSize: Int = 100,
         clientMessageExpirationTime: TimeInterval = 300,
-        tokenizer: String = "\n"
+        tokenizer: String = "\n",
+        maxCumulationBufferSize: Int = 1_048_576
     ) {
         self.bindHost = bindHost
         self.maxConnections = maxConnections
@@ -71,6 +78,7 @@ public struct ServerConfiguration: Sendable {
         self.clientMessageQueueSize = clientMessageQueueSize
         self.clientMessageExpirationTime = clientMessageExpirationTime
         self.tokenizer = tokenizer
+        self.maxCumulationBufferSize = maxCumulationBufferSize
     }
 
     /// A default configuration with commonly used settings.

@@ -32,6 +32,11 @@ public struct ClientConfiguration: Sendable {
     /// The tokenizer string used to split incoming messages. Defaults to "\n".
     public let tokenizer: String
 
+    /// Maximum number of bytes allowed in the cumulation buffer before the connection is closed.
+    /// Protects against unbounded memory growth from peers that never send the delimiter.
+    /// Defaults to 1 MB (1_048_576 bytes).
+    public let maxCumulationBufferSize: Int
+
     /// Creates a new ClientConfiguration with the specified parameters.
     ///
     /// - Parameters:
@@ -44,6 +49,7 @@ public struct ClientConfiguration: Sendable {
     ///   - messageQueueSize: Maximum number of messages to queue when disconnected.
     ///   - messageExpirationTime: How long to keep queued messages before expiring them.
     ///   - tokenizer: The tokenizer string used to split incoming messages.
+    ///   - maxCumulationBufferSize: Maximum bytes in the cumulation buffer before closing the connection.
     public init(
         connectTimeout: TimeInterval = 30.0,
         bufferSize: Int = 1024,
@@ -53,7 +59,8 @@ public struct ClientConfiguration: Sendable {
         qosClass: QoSClass = .default,
         messageQueueSize: Int = 500,
         messageExpirationTime: TimeInterval = 600,
-        tokenizer: String = "\n"
+        tokenizer: String = "\n",
+        maxCumulationBufferSize: Int = 1_048_576
     ) {
         self.connectTimeout = connectTimeout
         self.bufferSize = bufferSize
@@ -64,6 +71,7 @@ public struct ClientConfiguration: Sendable {
         self.messageQueueSize = messageQueueSize
         self.messageExpirationTime = messageExpirationTime
         self.tokenizer = tokenizer
+        self.maxCumulationBufferSize = maxCumulationBufferSize
     }
 
     /// A default configuration with commonly used settings.

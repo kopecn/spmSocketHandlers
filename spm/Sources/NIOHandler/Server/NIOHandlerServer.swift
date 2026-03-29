@@ -503,7 +503,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
                 self.logger,
                 channel.eventLoop,
                 messageHandler,
-                tokenizer: self.configuration.tokenizer
+                tokenizer: self.configuration.tokenizer,
+                maxBufferSize: self.configuration.maxCumulationBufferSize
             )
 
             try channel.pipeline.syncOperations.addHandler(stringHandler)

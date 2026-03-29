@@ -33,6 +33,7 @@ final class NIOStringHandler: ChannelInboundHandler {
     private let messageHandler: MessageReceivable
     private let eventLoop: EventLoop
     private let tokenizer: String
+    private let maxBufferSize: Int
 
     /// Buffer used to accumulate incoming bytes across partial reads.
     private var cumulationBuffer: ByteBuffer
@@ -41,12 +42,14 @@ final class NIOStringHandler: ChannelInboundHandler {
         _ logger: Logger,
         _ eventLoop: EventLoop,
         _ messageHandler: MessageReceivable,
-        tokenizer: String = "\n"
+        tokenizer: String = "\n",
+        maxBufferSize: Int = 1_048_576
     ) {
         self.logger = logger
         self.eventLoop = eventLoop
         self.messageHandler = messageHandler
         self.tokenizer = tokenizer
+        self.maxBufferSize = maxBufferSize
         self.cumulationBuffer = ByteBufferAllocator().buffer(capacity: 1024)
     }
 
@@ -55,6 +58,15 @@ final class NIOStringHandler: ChannelInboundHandler {
 
         // Append incoming data to the buffer
         cumulationBuffer.writeBuffer(&byteBuffer)
+
+        // Guard against unbounded growth from peers that never send the delimiter.
+        if cumulationBuffer.readableBytes > maxBufferSize {
+            logger.error(
+                "🔴 Cumulation buffer exceeded \(maxBufferSize) bytes without a delimiter. Closing channel."
+            )
+            context.close(promise: nil)
+            return
+        }
 
         // Decode strings split by tokenizer
         processBufferedMessages(context: context)
