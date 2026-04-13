@@ -94,9 +94,6 @@ public final class MessageQueue: @unchecked Sendable {
     @discardableResult
     public func enqueue(_ message: QueuedMessage) -> Bool {
         return queue.sync {
-            // Remove expired messages first
-            cleanupExpiredMessages()
-
             // Check if queue is full
             if messages.count >= configuration.maxQueueSize {
                 // Remove the oldest message to make room
@@ -122,8 +119,6 @@ public final class MessageQueue: @unchecked Sendable {
     /// - Returns: The next message to deliver, or nil if the queue is empty.
     public func dequeue() -> QueuedMessage? {
         return queue.sync {
-            cleanupExpiredMessages()
-
             guard !messages.isEmpty else { return nil }
 
             let message = messages.removeFirst()
@@ -149,7 +144,6 @@ public final class MessageQueue: @unchecked Sendable {
     /// - Returns: The next message to deliver, or nil if the queue is empty.
     public func peek() -> QueuedMessage? {
         return queue.sync {
-            cleanupExpiredMessages()
             return messages.first
         }
     }
@@ -157,7 +151,6 @@ public final class MessageQueue: @unchecked Sendable {
     /// Returns the current number of messages in the queue.
     public var count: Int {
         return queue.sync {
-            cleanupExpiredMessages()
             return messages.count
         }
     }
@@ -178,7 +171,6 @@ public final class MessageQueue: @unchecked Sendable {
     /// - Returns: An array of messages for the specified target.
     public func messages(for targetID: String) -> [QueuedMessage] {
         return queue.sync {
-            cleanupExpiredMessages()
             return messages.filter { $0.targetID == targetID }
         }
     }

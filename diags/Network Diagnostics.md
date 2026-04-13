@@ -53,3 +53,65 @@ sudo tcpdump -i any -A -vv 'port 50001' -n
 - Add `-v`, `-vv`, or `-vvv` for increasing verbosity
 - Combine filters: `'port 50001 and host 192.168.3.2'`
 - Save to `.pcap` files to open in Wireshark later
+
+---
+
+## Port and Process Inspection
+
+### List processes using a port
+
+```bash
+lsof -i :<port>
+```
+
+Example — who is listening on port 1234:
+
+```bash
+lsof -i :1234
+```
+
+Useful columns: `COMMAND` (process name), `PID`, `TYPE` (TCP/UDP), `NODE` (LISTEN, ESTABLISHED).
+
+### Check socket state for a port
+
+```bash
+netstat -an | grep <port>
+```
+
+Example — all connections to/from port 1234:
+
+```bash
+netstat -an | grep 1234
+```
+
+Common states:
+- `LISTEN` — server is bound and accepting connections
+- `ESTABLISHED` — active connection
+- `TIME_WAIT` — connection recently closed; port is in cooldown (prevents port reuse collisions)
+- `CLOSE_WAIT` — remote end closed; local close pending
+
+If a test fails with "address already in use", check for `TIME_WAIT` entries on the test port — the previous test run's socket is still cooling down. Wait a few seconds or change the port.
+
+---
+
+## Application-Level Diagnostics
+
+`NIOSocketHandlerServer` and `NIOSocketHandlerClient` expose live state for in-process inspection:
+
+```swift
+// Active client IDs (Set<AnyHashable>)
+server.connectedClientIDsPublisher.value
+
+// Message counters
+server.messagesReceived   // incremented by handleMessage
+server.messagesSent       // incremented by send
+
+// Connection state (SocketServerListeningState)
+server.serverConnectionStatePublisher.value
+
+// Client metrics snapshot
+client.getMetrics()   // [String: Any] — messagesSent, messagesReceived,
+                      // connectionAttempts, successfulConnections, etc.
+```
+
+These can be logged or exposed via a debug endpoint when diagnosing live issues without a packet capture.

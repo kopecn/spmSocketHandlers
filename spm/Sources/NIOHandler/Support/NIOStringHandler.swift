@@ -86,10 +86,13 @@ final class NIOStringHandler: ChannelInboundHandler {
             let length = newlineOffset - cumulationBuffer.readerIndex
 
             // Read message up to the token
-            guard let messageBytes = cumulationBuffer.readSlice(length: length),
-                let message = messageBytes.getString(at: 0, length: length)
-            else {
-                logger.warning("⚠️ Failed to decode message bytes as UTF-8 string.")
+            guard let messageBytes = cumulationBuffer.readSlice(length: length) else {
+                logger.warning("⚠️ Failed to read message slice from buffer.")
+                return
+            }
+            guard let message = messageBytes.getString(at: 0, length: length) else {
+                let hex = messageBytes.readableBytesView.map { String(format: "%02x", $0) }.joined(separator: " ")
+                logger.warning("⚠️ Failed to decode message bytes as UTF-8 string. Hex: \(hex)")
                 return
             }
 

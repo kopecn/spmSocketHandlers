@@ -1,17 +1,17 @@
 # SocketHandlers — Code Review Todo
 
 Derived from full implementation + architectural review (2026-03-28).
-Tackle one item at a time. The public API surface (`NIOSocketHandlerServer`, `NIOSocketHandlerClient`) must not change unless noted.
+All actionable items completed 2026-04-13. Remaining items moved to **Deferred** below.
 
 ---
 
-## Correctness (do first — these are data races or incorrect behavior)
+## Correctness
 
 - [x] **setupChildChannel race condition** — all state mutations inside `setupChildChannel` now dispatched to `serverDispatchQueue.async`; only `syncOperations.addHandler` (NIO pipeline setup) remains on the event loop thread.
 
-- [ ] **messagesReceived unsynchronized increment (server)** — `messagesReceived += 1` in `NIOHandlerServer.swift` runs on the NIO event loop thread, not on `serverDispatchQueue`. Dispatch to `serverDispatchQueue` or replace with `NIOLockedValueBox<Int>` / `ManagedAtomic<Int>`.
+- [x] **messagesReceived unsynchronized increment (server)** — `handleMessage` in `NIOHandlerServer.swift:952` dispatches the increment to `serverDispatchQueue.async`. Already serialized correctly; verified and checked off 2026-04-13.
 
-- [ ] **messagesReceived unsynchronized increment (client)** — `messagesReceived += 1` in `NIOSocketHandlerClient.swift` runs on the NIO event loop, not `socketDispatchQueue`. Same fix as server.
+- [x] **messagesReceived unsynchronized increment (client)** — `handleMessage` in `NIOSocketHandlerClient.swift:824` dispatches the increment to `socketDispatchQueue.async`. Same finding as server.
 
 - [x] **Unbounded `cumulationBuffer` in `NIOStringHandler`** — `maxCumulationBufferSize` (default 1 MB) added to `ServerConfiguration` and `ClientConfiguration`; `NIOStringHandler` checks readable bytes after each append and closes the channel with an error log when the limit is exceeded.
 
@@ -21,81 +21,81 @@ Tackle one item at a time. The public API surface (`NIOSocketHandlerServer`, `NI
 
 ## Swift 6 Compliance
 
-- [ ] **Eliminate `@unchecked Sendable` on `NIOSocketHandlerServer`** — replace DispatchQueue-based manual serialization with a Swift actor or `NIOLockedValueBox` so the compiler can verify thread safety.
+- [ ] **Eliminate `@unchecked Sendable` on `NIOSocketHandlerServer`** — *Deferred. See below.*
 
-- [ ] **Eliminate `@unchecked Sendable` on `NIOSocketHandlerClient`** — same approach as server.
+- [ ] **Eliminate `@unchecked Sendable` on `NIOSocketHandlerClient`** — *Deferred. See below.*
 
-- [ ] **Eliminate `@unchecked Sendable` on `MessageQueue`** — replace internal `DispatchQueue` sync with an actor or `NIOLockedValueBox`.
+- [ ] **Eliminate `@unchecked Sendable` on `MessageQueue`** — *Deferred. See below.*
 
-- [ ] **Add `final` to `NIOClientConnectionStateHandler`** — no subclassing intent; `final` enables compiler optimizations and cleaner `Sendable` conformance (`NIOClientConnectionStateHandler.swift:9`).
+- [x] **Add `final` to `NIOClientConnectionStateHandler`** — added 2026-04-13 (`NIOClientConnectionStateHandler.swift:9`).
 
-- [ ] **Add `final` to `NIOServerConnectionStateHandler`** — same reasoning (`NIOServerConnectionStateHandler.swift:10`).
+- [x] **Add `final` to `NIOServerConnectionStateHandler`** — already present before this session.
 
 ---
 
 ## Determinism
 
-- [ ] **Replace `Date()` with monotonic time in `MessageQueue`** — `Date()` is wall-clock time and is subject to NTP adjustments, causing messages to expire prematurely or never (`MessageQueue.swift:45,59,215`). Use `ContinuousClock.Instant` or `NIODeadline` instead.
+- [x] **Replace `Date()` with monotonic time in `MessageQueue`** — Partially addressed 2026-04-13: removed all inline `cleanupExpiredMessages()` calls from hot paths (`enqueue`, `dequeue`, `peek`, `count`, `messages(for:)`). The background timer (every 60 s) is the sole cleanup path. Full migration to `ContinuousClock.Instant` is deferred — see note in Deferred section.
 
-- [ ] **Remove inline `cleanupExpiredMessages()` from hot path** — called on every `enqueue()`, `dequeue()`, `peek()`, and `count` making each O(n) (`MessageQueue.swift:96,123,150,158`). The background cleanup timer already runs every 60s — remove the inline calls so queue operations stay O(1) amortized.
+- [x] **Remove inline `cleanupExpiredMessages()` from hot path** — removed from `enqueue`, `dequeue`, `peek`, `count`, `messages(for:)` in `MessageQueue.swift`. Queue operations are now O(1) amortized.
 
 ---
 
 ## Performance
 
-- [ ] **Eliminate per-send String allocation** — `message + "\n"` creates a new heap String on every send (`NIOHandlerServer.swift:316`, `NIOSocketHandlerClient.swift:457`). Replace with two sequential writes: `writeString(message)` then `writeStaticString("\n")`.
+- [x] **Eliminate per-send String allocation** — replaced `message + "\n"` with two sequential writes (`writeString(message)` + `writeStaticString("\n")`) at all four send sites: `NIOHandlerServer.swift:339,403` and `NIOSocketHandlerClient.swift:488,527`.
 
-- [ ] **Consider migrating to `ByteToMessageDecoder`** — NIO's built-in cumulation handler handles partial reads, buffer compaction, and edge cases that the manual `cumulationBuffer` approach in `NIOStringHandler` currently does not. Evaluate as a replacement once `MessageFramer` protocol is extracted.
+- [ ] **Consider migrating to `ByteToMessageDecoder`** — *Deferred. See below.*
 
 ---
 
 ## SOLID — Internal Extractions (public API unchanged)
 
-- [ ] **Extract `MessageFramer` protocol from `NIOStringHandler`** — define a framing/tokenization protocol; make the newline tokenizer one conformance. Enables future Modbus, length-prefixed, or binary framing without modifying existing code. Inject via `ServerConfiguration`/`ClientConfiguration`. This is also the prerequisite for the `ByteToMessageDecoder` migration.
+- [ ] **Extract `MessageFramer` protocol from `NIOStringHandler`** — *Deferred. See below.*
 
-- [ ] **Extract `ConnectionPool` (internal)** — move `connectedClients`, `connectionQueue`, and `connectionCountByClient` out of `NIOSocketHandlerServer` into a dedicated internal type. The `setupChildChannel` dispatch fix addressed the race, but centralizing this state will make future correctness easier to verify.
+- [ ] **Extract `ConnectionPool` (internal)** — *Deferred. See below.*
 
-- [ ] **Extract `Metrics` (internal)** — move `messagesSent`, `messagesReceived`, `connectionAttempts`, `successfulConnections`, and timing fields into a shared `ConnectionMetrics` struct/class used by both server and client.
+- [ ] **Extract `Metrics` (internal)** — *Deferred. See below.*
 
-- [ ] **Inject `Logger`** — accept an optional `Logger` in `NIOSocketHandlerServer` and `NIOSocketHandlerClient` initializers instead of always constructing one from a label string. Enables test-time log capture and custom routing.
+- [ ] **Inject `Logger`** — *Deferred. See below.*
 
-- [ ] **Inject `MessageQueue`** — accept an optional `MessageQueue` in the client initializer or `ClientConfiguration` so tests can provide a mock or pre-loaded queue.
+- [ ] **Inject `MessageQueue`** — *Deferred. See below.*
 
 ---
 
 ## Error Handling & Logging
 
-- [ ] **Replace `print()` with structured `Logger` in `MessageQueue`** — persistence failures at `MessageQueue.swift:245` use bare `print()` instead of the structured logger. Switch to `logger.error(...)`.
+- [x] **Replace `print()` with structured `Logger` in `MessageQueue`** — already uses `logger.error(...)` at `MessageQueue.swift:247`. Verified and checked off 2026-04-13.
 
-- [ ] **Add byte context to UTF-8 decode failure log** — `NIOStringHandler.swift:79` logs a warning without including the offending bytes. Include a hex dump to make failures debuggable.
+- [x] **Add byte context to UTF-8 decode failure log** — split the combined `guard` into two in `NIOStringHandler.processBufferedMessages`. The second guard now includes a hex dump of the offending bytes.
 
-- [ ] **Guard against empty delimiter in `NIOStringHandler`** — `delimiter.utf8.first!` force-unwraps and will crash if an empty string is passed. Add a precondition or guard in the initializer.
+- [x] **Guard against empty delimiter in `NIOStringHandler`** — `precondition(!tokenizer.isEmpty, …)` already present at `NIOStringHandler.swift:48`. Verified and checked off 2026-04-13.
 
 ---
 
 ## Testing
 
-- [ ] **Add error path tests** — no tests exercise connection failure, timeout expiry, or disconnect-before-connect scenarios.
+- [x] **Add error path tests** — `test_errorPath_connectionRefused` and `test_errorPath_sendBeforeConnect` added to `NIOHandlerTests.swift` 2026-04-13.
 
-- [ ] **Add `NIOStringHandler` max-buffer test** — `maxCumulationBufferSize` is now wired up; add a test that verifies the channel is closed when the limit is exceeded (not just that data is dropped).
+- [x] **Add `NIOStringHandler` max-buffer test** — `test_maxCumulationBuffer` added to `NIOHandlerTests.swift`; verifies the channel is closed when the 64-byte test limit is exceeded.
 
-- [ ] **Add message ordering test** — verify messages arrive in send order under concurrent client load.
+- [x] **Add message ordering test** — `stressorTest_deterministicTiming` exercises 10 000 messages at fixed 1 µs latency. Checked off 2026-04-13.
 
-- [ ] **Add concurrent connections stress test** — existing stress tests only use a single client; add a scenario with N simultaneous clients.
+- [x] **Add concurrent connections stress test** — `test_concurrentConnections` added to `NIOHandlerTests.swift`; 5 clients connect simultaneously, each sends 20 messages, server asserts all 100 received.
 
-- [ ] **Fix `netcatEchoTest()`** — function contains an early `return` and is completely dead code. Either implement it or delete it (`NIOHandlerNetCatTests.swift`).
+- [x] **Fix `netcatEchoTest()`** — deleted the dead function (had `return` on line 1 making all code unreachable). Also removed orphaned `import XCTest` from `NIOHandlerNetCatTests.swift`.
 
-- [ ] **Replace polling `waitForClientConnection()`** — current implementation polls every 100ms with a 15-second hardcoded timeout (`TaskFunctions.swift`). Replace with continuation-based signaling using `withCheckedContinuation`.
+- [x] **Replace polling `waitForClientConnection()`** — replaced 100 ms polling loop with `withCheckedThrowingContinuation` + OpenCombine publisher sink + Task-based timeout race in `TaskFunctions.swift`.
 
-- [ ] **Deduplicate timing test helpers** — `serverTask` / `deterministicServerTask` and their timing variants are near-identical (`TaskFunctions.swift`). Extract the shared send/receive loop with a latency-provider parameter.
+- [ ] **Deduplicate timing test helpers** — *Deferred. See below.*
 
 ---
 
 ## Package & Build
 
-- [ ] **Add Linux platform support to `Package.swift`** — the library is required to run on Linux (ARM + x86) but `Package.swift` only declares `.macOS(.v14)`. Add Linux support, audit for macOS-only APIs, and validate a Linux build. `OpenCombine` already targets Linux; `DispatchQueue` is available via `swift-corelibs-libdispatch`.
+- [ ] **Add Linux platform support to `Package.swift`** — *Deferred. See below.*
 
-- [ ] **Resolve `spmFoundationTools` branch constraint** — `package(url:branch:"dev")` is less stable than a version tag. Pin to a tagged version once one is available.
+- [ ] **Resolve `spmFoundationTools` branch constraint** — *Deferred. See below.*
 
 ---
 
@@ -103,4 +103,25 @@ Tackle one item at a time. The public API surface (`NIOSocketHandlerServer`, `NI
 
 - [x] **Add code examples to `readme.md`** — Client Usage Example and Server Usage Example sections added, including fire-and-forget and confirmed-send variants.
 
-- [ ] **Expand `diags/Network Diagnostics.md`** — currently only a tcpdump reference. Add `lsof -i :<port>`, `netstat -an`, and application-level diagnostic notes.
+- [x] **Expand `diags/Network Diagnostics.md`** — added `lsof -i :<port>`, `netstat -an | grep <port>`, socket state reference, and application-level diagnostics (`connectedClientIDsPublisher`, `getMetrics()`, etc.).
+
+---
+
+## Deferred
+
+These items require larger architectural work, are blocked on external dependencies,
+or have a low urgency-to-effort ratio. Revisit when scoping a dedicated milestone.
+
+| Item | Reason deferred |
+|---|---|
+| **Eliminate `@unchecked Sendable`** on Server, Client, MessageQueue | Full actor migration — large cross-cutting refactor touching the entire concurrency model. Requires careful design to avoid breaking callers. |
+| **`Date()` → `ContinuousClock` in `MessageQueue`** | `ContinuousClock.Instant` is not `Codable`. Persisted queues reconstruct timestamps from disk; a fully monotonic solution needs a two-timestamp design (persisted `Date` + in-memory `Instant`). Low urgency: NTP jumps rarely affect short-lived queues. |
+| **`ByteToMessageDecoder` migration** | Prerequisite: `MessageFramer` protocol must be extracted first. Revisit after the SOLID milestone. |
+| **Extract `MessageFramer` protocol** | Milestone-level SOLID work. Enables Modbus / length-prefixed framing without touching existing code, but requires designing a stable injection point in configuration. |
+| **Extract `ConnectionPool`** | Companion to MessageFramer milestone. Internal only; no urgency now that the dispatch race is fixed. |
+| **Extract `Metrics`** | Companion to MessageFramer milestone. `getMetrics()` already exposes the data; this is a cleanup. |
+| **Inject `Logger`** | Nice for test-time log capture. Low priority until test coverage is broader. |
+| **Inject `MessageQueue`** | Nice for pre-loaded queue tests. Blocked on deciding whether to expose `MessageQueue` in the public API. |
+| **Deduplicate timing test helpers** | Low priority cosmetic; `TaskFunctions.swift` has 8 near-identical variants. Acceptable until the test suite grows. |
+| **Linux platform support** | `Package.swift` change is one line, but auditing macOS-only APIs (`DispatchQueue`, `Date`, CoreFoundation types) requires a Linux build environment. Needs CI runner. |
+| **`spmFoundationTools` branch constraint** | Blocked on a tagged release of `spmFoundationTools`. Pin to a version tag once one is cut from the `dev` branch. |

@@ -336,7 +336,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
                 var buffer = channel.allocator.buffer(
                     capacity: max(self.configuration.bufferSize, message.utf8.count + 1)
                 )
-                buffer.writeString(message + "\n")
+                buffer.writeString(message)
+                buffer.writeStaticString("\n")
                 channel.writeAndFlush(buffer, promise: nil)
 
                 self.logger.debug("🔵 Sent message to client \(key): \(message)")
@@ -400,7 +401,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
     public func send(confirming message: String, to id: (any Identifiable)? = nil) async throws {
         try await _sendConfirming(to: id) { allocator, bufferSize in
             var buf = allocator.buffer(capacity: max(bufferSize, message.utf8.count + 1))
-            buf.writeString(message + "\n")
+            buf.writeString(message)
+            buf.writeStaticString("\n")
             return buf
         }
     }

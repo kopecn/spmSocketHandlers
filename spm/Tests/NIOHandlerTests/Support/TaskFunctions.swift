@@ -2,42 +2,42 @@ import Foundation
 import NIOCore
 import NIOPosix
 import OpenCombine
+import SocketCommon
 
 @testable import NIOHandler
 
 // MARK: - Connection Helpers
 
 func waitForClientConnection(server: NIOSocketHandlerServer, timeout: TimeInterval = 15.0) async throws {
-    let startTime = Date()
-    var lastLogTime = startTime
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        let lock = NSLock()
+        var completed = false
+        var cancellable: AnyCancellable?
 
-    print("🔍 Waiting for client connection...")
-
-    while Date().timeIntervalSince(startTime) < timeout {
-        let connectedClients = server.connectedClientIDsPublisher.value
-        if !connectedClients.isEmpty {
-            print("📡 Client connected! Connected clients: \(connectedClients)")
-            return
+        func complete(_ result: Result<Void, Error>) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !completed else { return }
+            completed = true
+            cancellable?.cancel()
+            continuation.resume(with: result)
         }
 
-        // Log progress every 2 seconds
-        let currentTime = Date()
-        if currentTime.timeIntervalSince(lastLogTime) >= 2.0 {
-            print(
-                "⏳ Still waiting for client connection... (\(String(format: "%.1f", currentTime.timeIntervalSince(startTime)))s elapsed)"
-            )
-            lastLogTime = currentTime
-        }
+        cancellable = server.connectedClientIDsPublisher
+            .filter { !$0.isEmpty }
+            .first()
+            .sink(receiveCompletion: { _ in }) { _ in
+                complete(.success(()))
+            }
 
-        try await Task.sleep(nanoseconds: 100_000_000)  // 100ms polling interval
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            complete(
+                .failure(
+                    SocketHandlerError.connectionFailed(
+                        message: "Timeout waiting for client connection after \(timeout)s")))
+        }
     }
-
-    print("❌ Timeout waiting for client connection after \(timeout)s")
-    throw NSError(
-        domain: "TestError",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Timeout waiting for client connection"]
-    )
 }
 
 // MARK: - Test Task Functions
