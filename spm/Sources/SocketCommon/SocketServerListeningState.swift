@@ -25,7 +25,8 @@ public enum SocketServerListeningState: Equatable, Sendable, CustomStringConvert
         switch (lhs, rhs) {
         case (.off, .off),
             (.listening, .listening),
-            (.activeConnections, .activeConnections):
+            (.activeConnections, .activeConnections),
+            (.shuttingDown, .shuttingDown):
             return true
         case (.error, .error):
             return true  // Treat any error as equal

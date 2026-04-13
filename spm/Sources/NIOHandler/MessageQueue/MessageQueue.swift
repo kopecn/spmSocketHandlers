@@ -89,14 +89,18 @@ public final class MessageQueue: @unchecked Sendable {
 
     /// Enqueues a message for later delivery.
     ///
+    /// When the queue is at capacity, the oldest message is evicted to make room before the
+    /// new message is inserted. This method always succeeds and always returns `true`.
+    ///
     /// - Parameter message: The message to enqueue.
-    /// - Returns: True if the message was successfully enqueued, false if the queue is full.
+    /// - Returns: Always `true`. The queue never rejects a message — it evicts the oldest entry
+    ///   instead. The return value is kept for API compatibility.
     @discardableResult
     public func enqueue(_ message: QueuedMessage) -> Bool {
         return queue.sync {
             // Check if queue is full
             if messages.count >= configuration.maxQueueSize {
-                // Remove the oldest message to make room
+                // Evict the oldest message to make room
                 if !messages.isEmpty {
                     messages.removeFirst()
                 }

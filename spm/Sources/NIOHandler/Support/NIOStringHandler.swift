@@ -93,6 +93,9 @@ final class NIOStringHandler: ChannelInboundHandler {
             guard let message = messageBytes.getString(at: 0, length: length) else {
                 let hex = messageBytes.readableBytesView.map { String(format: "%02x", $0) }.joined(separator: " ")
                 logger.warning("⚠️ Failed to decode message bytes as UTF-8 string. Hex: \(hex)")
+                // Consume the delimiter so the next iteration starts cleanly after this frame
+                // rather than re-finding a zero-length match and emitting a spurious empty message.
+                _ = cumulationBuffer.readInteger(as: UInt8.self)
                 return
             }
 

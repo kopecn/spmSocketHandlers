@@ -537,7 +537,12 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
             self.serverConnectionStatePublisher.send(.shuttingDown)
 
             self.closeListener()
-            self.closeAllClients()
+            let closeFutures = self.closeAllClients()
+            // Wait for all client channels to fully close before tearing down the event loop.
+            // Without this, in-flight close futures are abandoned when syncShutdownGracefully runs.
+            if !closeFutures.isEmpty {
+                try? EventLoopFuture.andAllComplete(closeFutures, on: self.group.next()).wait()
+            }
             self.shutdownEventLoopIfNeeded()
 
             self.serverConnectionStatePublisher.send(.off)
@@ -659,7 +664,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
     /// - Note: This method executes on the server's dispatch queue to ensure thread safety.
     private func handleClientDisconnection(_ key: AnyHashable) {
         let keyDescription = String(describing: key)
-        serverDispatchQueue.async {
+        serverDispatchQueue.async { [weak self] in
+            guard let self = self else { return }
             self.connectedClients.removeValue(forKey: key)
             self.removeConnectedClient(key)
 
@@ -737,17 +743,22 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
         }
     }
 
-    /// Closes all active client connections and clears the client tracking data structures.
+    /// Closes all active client connections, clears tracking data, and returns the close futures.
     ///
-    /// This method iterates through all connected clients, closes their channels synchronously,
-    /// and then clears the connected clients dictionary and updates the publisher.
+    /// Callers that need to know when all channels have actually closed (e.g. `shutdown()` before
+    /// tearing down the event loop) should wait on the returned futures via
+    /// `EventLoopFuture.andAllComplete(_:on:).wait()`. Each future is pre-recovered so a single
+    /// close failure does not short-circuit the others.
     ///
     /// - Note: If closing individual client connections fails, warnings are logged but the operation continues.
     ///         This ensures that the server can complete shutdown even if some client disconnections fail.
-    private func closeAllClients() {
+    @discardableResult
+    private func closeAllClients() -> [EventLoopFuture<Void>] {
+        var futures: [EventLoopFuture<Void>] = []
         for (id, channel) in self.connectedClients {
             let idDescription = String(describing: id)
-            channel.close().whenComplete { [weak self] result in
+            let future = channel.close()
+            future.whenComplete { [weak self] result in
                 switch result {
                 case .success:
                     self?.logger.info("🟢 Closed connection to client \(idDescription)")
@@ -755,6 +766,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
                     self?.logger.warning("⚠️ Error closing client \(idDescription): \(error)")
                 }
             }
+            // Recover so andAllComplete doesn't short-circuit on the first close error.
+            futures.append(future.flatMapError { _ in channel.eventLoop.makeSucceededFuture(()) })
         }
 
         self.connectedClients.removeAll()
@@ -762,6 +775,7 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
         self.connectionCountByClient.removeAll()
         self.clientMessageQueues.removeAll()
         self.connectedClientIDsPublisher.send([])
+        return futures
     }
 
     /// Gets connection statistics for monitoring and debugging.
@@ -948,13 +962,20 @@ extension NIOSocketHandlerServer {
     ///
     /// This method is called by the underlying NIO handler when a message is received from any client.
     /// It increments the messages received counter and invokes the registered string message handler.
+    /// The async suspension point does not resume until the handler has actually run.
     ///
     /// - Parameter message: The message to be handled, represented as a `String`.
     public func handleMessage(_ message: String) async {
-        serverDispatchQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.messagesReceived += 1
-            self.stringMessageHandler?(message)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            serverDispatchQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                self.messagesReceived += 1
+                self.stringMessageHandler?(message)
+                continuation.resume()
+            }
         }
     }
 }

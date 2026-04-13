@@ -7,15 +7,15 @@ import SocketCommon
 ///
 /// This handler emits `.activeConnections`, `.disconnected`, or `.error(err)` based on channel activity.
 /// It's intended to be attached to **per-client channels** on the server side.
-final class NIOServerConnectionStateHandler: ChannelInboundHandler {
+final class NIOServerConnectionStateHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
 
-    private let onStateChange: (SocketServerListeningState) -> Void
+    private let onStateChange: @Sendable (SocketServerListeningState) -> Void
     private let logger: Logger
 
     init(
         logger: Logger,
-        onStateChange: @escaping (SocketServerListeningState) -> Void
+        onStateChange: @escaping @Sendable (SocketServerListeningState) -> Void
     ) {
         self.logger = logger
         self.onStateChange = onStateChange
@@ -29,6 +29,10 @@ final class NIOServerConnectionStateHandler: ChannelInboundHandler {
 
     func channelInactive(context: ChannelHandlerContext) {
         logger.info("🔴 Channel became inactive.")
+        // Note: onStateChange is intentionally NOT called here. The server tracks per-client
+        // disconnection via channel.closeFuture.whenComplete in setupChildChannel, which gives
+        // it access to the client key needed for cleanup. This handler is only used to emit
+        // .activeConnections and .error(err:) state changes.
         context.fireChannelInactive()
     }
 

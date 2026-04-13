@@ -137,8 +137,8 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
     }
 
     deinit {
-        logger.info(
-            "🟢 NIOSocketHandlerClient deinitialized. Call shutdown() explicitly to clean up."
+        logger.warning(
+            "⚠️ NIOSocketHandlerClient deallocated — shutdown() was not called before deallocation."
         )
     }
 
@@ -369,6 +369,9 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
     private func disconnectInternal(completion: (@Sendable () -> Void)?) {
         // Cancel any pending reconnection attempts
         cancelRetryTimer()
+        // Clear the stored handler to break the retain cycle that exists when connect(host:port:)
+        // is used (which passes self as the messageHandler and stores it in lastMessageHandler).
+        lastMessageHandler = nil
 
         guard let currentChannel = self.channel else {
             logger.info("🟢 Disconnect called but channel was nil.")
@@ -683,9 +686,10 @@ public class NIOSocketHandlerClient: MessageDuplex, @unchecked Sendable {
     private func setChannel(_ channel: Channel?) {
         self.channel = channel
 
-        if let isActive = channel?.isActive {
-            connectionStatePublisher.send(isActive ? .connected : .disconnected)
-        } else {
+        // Emit .disconnected immediately when the channel is nil or inactive.
+        // .connected is emitted by NIOClientConnectionStateHandler.channelActive via the pipeline,
+        // so we deliberately skip it here to avoid publishing .connected twice per connection.
+        if channel == nil || channel?.isActive == false {
             connectionStatePublisher.send(.disconnected)
         }
 
@@ -818,13 +822,20 @@ extension NIOSocketHandlerClient {
     ///
     /// This method is called by the underlying NIO handler when a message is received.
     /// It increments the messages received counter and invokes the registered string message handler.
+    /// The async suspension point does not resume until the handler has actually run.
     ///
     /// - Parameter message: The message to be handled, represented as a `String`.
     public func handleMessage(_ message: String) async {
-        socketDispatchQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.messagesReceived += 1
-            self.stringMessageHandler?(message)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            socketDispatchQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume()
+                    return
+                }
+                self.messagesReceived += 1
+                self.stringMessageHandler?(message)
+                continuation.resume()
+            }
         }
     }
 }

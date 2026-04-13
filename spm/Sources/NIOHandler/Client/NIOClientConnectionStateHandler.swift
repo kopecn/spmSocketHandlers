@@ -6,15 +6,15 @@ import SocketCommon
 /// A ChannelInboundHandler that observes connection state changes and notifies the caller.
 ///
 /// This handler emits `.connected`, `.disconnected`, or `.error(err)` events based on channel lifecycle.
-final class NIOClientConnectionStateHandler: ChannelInboundHandler {
+final class NIOClientConnectionStateHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
 
-    private let onStateChange: (SocketClientConnectionState) -> Void
+    private let onStateChange: @Sendable (SocketClientConnectionState) -> Void
     private let logger: Logger
 
     init(
         logger: Logger,
-        onStateChange: @escaping (SocketClientConnectionState) -> Void
+        onStateChange: @escaping @Sendable (SocketClientConnectionState) -> Void
     ) {
         self.logger = logger
         self.onStateChange = onStateChange
