@@ -27,7 +27,7 @@ class NIOClientConnectionStateHandler: ChannelInboundHandler {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        logger.info("🟢 Channel became inactive.")
+        logger.info("🔴 Channel became inactive.")
         onStateChange(.disconnected)
         context.fireChannelInactive()
     }

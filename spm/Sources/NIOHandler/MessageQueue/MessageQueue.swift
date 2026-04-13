@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 /// A message queuing system for handling messages when connections are unavailable.
 ///
@@ -65,6 +66,7 @@ public final class MessageQueue: @unchecked Sendable {
 
     private let configuration: Configuration
     private let queue = DispatchQueue(label: "com.socket-handlers.message-queue", qos: .utility)
+    private let logger = Logger(label: "com.socket-handlers.message-queue")
     private var messages: [QueuedMessage] = []
     private var cleanupTimer: DispatchSourceTimer?
 
@@ -242,7 +244,7 @@ public final class MessageQueue: @unchecked Sendable {
             try data.write(to: URL(fileURLWithPath: path))
         } catch {
             // Persistence failure is logged but doesn't stop operation
-            print("Failed to persist messages: \(error)")
+            logger.error("🔴 Failed to persist messages: \(error)")
         }
     }
 }

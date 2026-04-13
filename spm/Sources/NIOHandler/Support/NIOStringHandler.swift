@@ -45,6 +45,7 @@ final class NIOStringHandler: ChannelInboundHandler {
         tokenizer: String = "\n",
         maxBufferSize: Int = 1_048_576
     ) {
+        precondition(!tokenizer.isEmpty, "NIOStringHandler: tokenizer must not be empty")
         self.logger = logger
         self.eventLoop = eventLoop
         self.messageHandler = messageHandler
