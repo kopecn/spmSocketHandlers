@@ -113,7 +113,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
             self.group = group
             self.ownsEventLoopGroup = false
         } else {
-            self.group = MultiThreadedEventLoopGroup(numberOfThreads: configuration.eventLoopThreads)
+            self.group = MultiThreadedEventLoopGroup(
+                numberOfThreads: configuration.eventLoopThreads)
             self.ownsEventLoopGroup = true
         }
     }
@@ -224,24 +225,33 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
         }
     }
 
-    /// Sends raw binary data to a specific client or the most recently connected client.
-    /// Conformance to `MessageSendable`.
+    /// Fire-and-forget binary send to a specific client. Returns immediately; does not wait
+    /// for the write to flush.
+    ///
+    /// Use this when sending binary/byte-framed payloads and you do not need delivery
+    /// confirmation. No delimiter is appended — bytes are written to the channel as-is.
+    ///
+    /// **When to use `send(to:_:Data:_:_:)` vs `send(confirming:to:)` with Data:**
+    /// - Use this overload for high-throughput or best-effort sends where a dropped write is
+    ///   acceptable and you want to stay on the non-async call path.
+    /// - Use `send(confirming: Data, to:)` when you need to `await` delivery confirmation or
+    ///   surface a write error to the caller.
+    ///
+    /// **Data vs String:**
+    /// - Use this overload for binary protocols, packed structs, or any payload where
+    ///   appending a newline would corrupt the data.
+    /// - Use `send(to:_:String:_:_:)` for newline-delimited text protocols; that overload
+    ///   appends `\n` automatically and supports per-client offline queuing.
+    ///
+    /// - Note: Data queuing is not supported. If `queueIfDisconnected` is `true` and the
+    ///   client is disconnected, a warning is logged and the data is dropped.
     ///
     /// - Parameters:
-    ///   - id: The specific client ID to send the data to. If nil, the data
-    ///         will be sent to the most recently connected client.
-    ///   - data: The binary data to send to the client.
-    ///   - priority: The priority of the message (higher values have higher priority).
-    ///   - queueIfDisconnected: Whether to queue the data if the client is not connected.
-    ///
-    /// - Returns: `true` if the send was initiated successfully.
-    ///
-    /// - Note:
-    ///   - This method executes asynchronously on the server's dispatch queue.
-    ///   - Data is written directly to the channel buffer without string conversion overhead.
-    ///   - Data queuing is not currently supported; if `queueIfDisconnected` is `true` and
-    ///     the client is disconnected, a warning will be logged.
-    ///   - Unlike `send(_:String:_:_:)`, no newline terminator is appended to preserve binary integrity.
+    ///   - id: The target client ID. If `nil`, targets the most recently connected client.
+    ///   - data: The raw bytes to send.
+    ///   - priority: Message priority. Unused for data sends (no queuing support).
+    ///   - queueIfDisconnected: If `true` and disconnected, logs a warning (data queuing unsupported).
+    /// - Returns: `true` always — the return value reflects dispatch initiation, not delivery.
     @discardableResult
     public func send(
         to id: (any Identifiable)? = nil,
@@ -260,7 +270,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
 
             if let channel = self.connectedClients[key], channel.isActive {
                 // Send immediately if client is connected - write raw bytes without string conversion
-                var buffer = channel.allocator.buffer(capacity: max(self.configuration.bufferSize, data.count))
+                var buffer = channel.allocator.buffer(
+                    capacity: max(self.configuration.bufferSize, data.count))
                 buffer.writeBytes(data)
 
                 channel.writeAndFlush(buffer, promise: nil)
@@ -268,30 +279,42 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
                 self.connectionCountByClient[key] = (self.connectionCountByClient[key] ?? 0) + 1
             } else if queueIfDisconnected {
                 // MessageQueue only supports String content - Data queuing not supported
-                self.logger.warning("⚠️ Data queuing not supported. Message queue only accepts String content.")
+                self.logger.warning(
+                    "⚠️ Data queuing not supported. Message queue only accepts String content.")
             } else {
-                self.logger.error("🔴 Client \(key) is not connected and message queuing is disabled.")
+                self.logger.error(
+                    "🔴 Client \(key) is not connected and message queuing is disabled.")
             }
         }
         return true
     }
 
-    /// Sends a message to a specific client or the most recently connected client.
-    /// Conformance to `MessageSendable`.
+    /// Fire-and-forget text send to a specific client. Returns immediately; does not wait
+    /// for the write to flush.
+    ///
+    /// Use this for newline-delimited text protocols where you don't need delivery
+    /// confirmation. A `\n` terminator is appended automatically. If the client is
+    /// temporarily disconnected, the message can be queued for delivery on reconnect.
+    ///
+    /// **When to use `send(to:_:String:_:_:)` vs `send(confirming:to:)` with String:**
+    /// - Use this overload for high-throughput or best-effort sends, or when the call site
+    ///   is non-async and you cannot `await`. Queuing on disconnect is available here only.
+    /// - Use `send(confirming: String, to:)` when you need to `await` delivery confirmation
+    ///   or surface a write error to the caller. That overload does not queue on disconnect.
+    ///
+    /// **String vs Data:**
+    /// - Use this overload for ASCII / UTF-8 text protocols. A `\n` delimiter is appended
+    ///   and queuing is supported when `queueIfDisconnected` is `true`.
+    /// - Use `send(to:_:Data:_:_:)` for binary protocols where appending a newline would
+    ///   corrupt the payload. Note that Data sends do not support offline queuing.
     ///
     /// - Parameters:
-    ///   - id: The specific client ID to send the message to. If nil, the message
-    ///         will be sent to the most recently connected client.
-    ///   - message: The string message to send to the client.
-    ///   - priority: The priority of the message (higher values have higher priority). Defaults to 0.
-    ///   - queueIfDisconnected: Whether to queue the message if the client is not connected. Defaults to true.
-    ///
-    /// - Returns: `true` if the send was initiated successfully.
-    ///
-    /// - Note: This method executes asynchronously on the server's dispatch queue.
-    ///         If the specified client is not connected and queueIfDisconnected is true,
-    ///         the message will be queued for delivery when the client reconnects.
-    ///         Messages are automatically terminated with a newline character.
+    ///   - id: The target client ID. If `nil`, targets the most recently connected client.
+    ///   - message: The UTF-8 string to send. A `\n` terminator is appended automatically.
+    ///   - priority: Queue priority (higher = dequeued first). Ignored when client is connected.
+    ///   - queueIfDisconnected: If `true` and the client is disconnected, the message is
+    ///     queued for delivery on reconnect. If `false`, the message is dropped with an error log.
+    /// - Returns: `true` always — the return value reflects dispatch initiation, not delivery.
     @discardableResult
     public func send(
         to id: (any Identifiable)? = nil,
@@ -340,13 +363,116 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
                 if self.clientMessageQueues[key]?.enqueue(queuedMessage) == true {
                     self.logger.info("📥 Message queued for client \(key): \(message)")
                 } else {
-                    self.logger.warning("⚠️ Failed to queue message for client \(key) (queue full): \(message)")
+                    self.logger.warning(
+                        "⚠️ Failed to queue message for client \(key) (queue full): \(message)")
                 }
             } else {
-                self.logger.error("🔴 Client \(key) is not connected and message queuing is disabled.")
+                self.logger.error(
+                    "🔴 Client \(key) is not connected and message queuing is disabled.")
             }
         }
         return true
+    }
+
+    /// Confirmed text send to a specific client. Suspends until the write is flushed to the
+    /// kernel, then resumes. Throws on connection failure or write error.
+    ///
+    /// Use this when you need to know that the bytes left the process before continuing —
+    /// for example, in a request/response flow where the next step depends on delivery.
+    /// A `\n` terminator is appended automatically.
+    ///
+    /// **When to use `send(confirming:to:)` with String vs `send(to:_:String:_:_:)`:**
+    /// - Use this overload when the call site is `async` and delivery confirmation or
+    ///   error propagation is required.
+    /// - Use `send(to:_:String:_:_:)` for fire-and-forget sends, non-async call sites,
+    ///   or when you want the message queued if the client is temporarily disconnected
+    ///   (offline queuing is only available on the non-confirming overload).
+    ///
+    /// **String vs Data:**
+    /// - Use this overload for UTF-8 text protocols; `\n` is appended automatically.
+    /// - Use `send(confirming: Data, to:)` for binary payloads where a newline would
+    ///   corrupt the data. No delimiter is appended in that overload.
+    ///
+    /// - Parameters:
+    ///   - message: The UTF-8 string to send. A `\n` terminator is appended automatically.
+    ///   - id: The client to send to. If `nil`, targets the most recently connected client.
+    /// - Throws: `SocketHandlerError.sendFailed` if the client is not connected or the write fails.
+    public func send(confirming message: String, to id: (any Identifiable)? = nil) async throws {
+        try await _sendConfirming(to: id) { allocator, bufferSize in
+            var buf = allocator.buffer(capacity: max(bufferSize, message.utf8.count + 1))
+            buf.writeString(message + "\n")
+            return buf
+        }
+    }
+
+    /// Confirmed binary send to a specific client. Suspends until the write is flushed to
+    /// the kernel, then resumes. Throws on connection failure or write error.
+    ///
+    /// Use this when you need delivery confirmation for binary payloads — for example,
+    /// when sending packed structs or binary-framed protocol messages and the next step
+    /// depends on successful dispatch. No delimiter is appended; bytes are written as-is.
+    ///
+    /// **When to use `send(confirming:to:)` with Data vs `send(to:_:Data:_:_:)`:**
+    /// - Use this overload when the call site is `async` and you need to `await` delivery
+    ///   or propagate a write error.
+    /// - Use `send(to:_:Data:_:_:)` for fire-and-forget binary sends or non-async call
+    ///   sites. Note: neither Data overload supports offline queuing.
+    ///
+    /// **Data vs String:**
+    /// - Use this overload for binary protocols, packed structs, or any payload where
+    ///   appending a newline would corrupt the data. No delimiter is added.
+    /// - Use `send(confirming: String, to:)` for UTF-8 text protocols; that overload
+    ///   appends `\n` automatically.
+    ///
+    /// - Parameters:
+    ///   - data: The raw bytes to send. Written to the channel as-is with no delimiter.
+    ///   - id: The client to send to. If `nil`, targets the most recently connected client.
+    /// - Throws: `SocketHandlerError.sendFailed` if the client is not connected or the write fails.
+    public func send(confirming data: Data, to id: (any Identifiable)? = nil) async throws {
+        try await _sendConfirming(to: id) { allocator, bufferSize in
+            var buf = allocator.buffer(capacity: max(bufferSize, data.count))
+            buf.writeBytes(data)
+            return buf
+        }
+    }
+
+    private func _sendConfirming(
+        to id: (any Identifiable)?,
+        _ makeBuffer: @escaping @Sendable (ByteBufferAllocator, Int) -> ByteBuffer
+    ) async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            serverDispatchQueue.async { [weak self] in
+                guard let self = self else {
+                    continuation.resume(
+                        throwing: SocketHandlerError.sendFailed(message: "Server deallocated"))
+                    return
+                }
+                guard let clientID = id ?? self.lastID else {
+                    continuation.resume(
+                        throwing: SocketHandlerError.sendFailed(message: "No client ID available"))
+                    return
+                }
+                let key = self.makeKey(from: clientID)
+                guard let channel = self.connectedClients[key], channel.isActive else {
+                    continuation.resume(
+                        throwing: SocketHandlerError.sendFailed(
+                            message: "Client \(String(describing: key)) is not connected"
+                        )
+                    )
+                    return
+                }
+                let buffer = makeBuffer(channel.allocator, self.configuration.bufferSize)
+                channel.writeAndFlush(buffer).whenComplete { result in
+                    switch result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
     }
 
     /// Stops the server from accepting new connections while keeping existing connections active.
@@ -446,7 +572,9 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
         // by a narrow window, but blocking the event loop with sync is worse. Over-acceptance
         // of one extra connection in a race is acceptable for this soft limit.
         if connectedClients.count >= configuration.maxConnections {
-            logger.warning("🔴 Maximum connections (\(configuration.maxConnections)) reached. Rejecting new connection.")
+            logger.warning(
+                "🔴 Maximum connections (\(configuration.maxConnections)) reached. Rejecting new connection."
+            )
 
             // Send a rejection message and close the connection
             let rejectionMessage = "Server at maximum capacity. Connection rejected.\n"
@@ -644,7 +772,8 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
         serverDispatchQueue.sync {
             stats["totalConnections"] = connectedClients.count
             stats["maxConnections"] = configuration.maxConnections
-            stats["connectionUtilization"] = Double(connectedClients.count) / Double(configuration.maxConnections)
+            stats["connectionUtilization"] =
+                Double(connectedClients.count) / Double(configuration.maxConnections)
             stats["connectionQueue"] = connectionQueue
             stats["messageCountsByClient"] = connectionCountByClient
             stats["oldestConnection"] = connectionQueue.first
@@ -673,14 +802,16 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
 
             disconnectedClient = oldestClientKey
             let keyDescription = String(describing: oldestClientKey)
-            logger.info("🔄 Disconnecting oldest client \(keyDescription) to make room for new connections")
+            logger.info(
+                "🔄 Disconnecting oldest client \(keyDescription) to make room for new connections")
 
             channel.close().whenComplete { [weak self] result in
                 switch result {
                 case .success:
                     self?.logger.info("🟢 Successfully disconnected oldest client \(keyDescription)")
                 case .failure(let error):
-                    self?.logger.warning("⚠️ Error disconnecting oldest client \(keyDescription): \(error)")
+                    self?.logger.warning(
+                        "⚠️ Error disconnecting oldest client \(keyDescription): \(error)")
                 }
             }
         }
@@ -724,7 +855,9 @@ public final class NIOSocketHandlerServer: MessageDuplex, @unchecked Sendable {
         if remainingCount == 0 {
             logger.info("✅ All queued messages sent to client \(key)")
         } else {
-            logger.warning("⚠️ \(remainingCount) messages remain in queue for client \(key) after connection lost")
+            logger.warning(
+                "⚠️ \(remainingCount) messages remain in queue for client \(key) after connection lost"
+            )
         }
     }
 

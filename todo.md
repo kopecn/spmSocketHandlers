@@ -7,15 +7,15 @@ Tackle one item at a time. The public API surface (`NIOSocketHandlerServer`, `NI
 
 ## Correctness (do first — these are data races or incorrect behavior)
 
-- [ ] **setupChildChannel race condition** — `connectedClients`, `connectionQueue`, `connectionCountByClient`, and `lastID` are mutated on the NIO event loop thread inside `setupChildChannel` (`NIOHandlerServer.swift:462-467`) but read/written on `serverDispatchQueue` everywhere else. Dispatch all state mutations inside `setupChildChannel` onto `serverDispatchQueue`.
+- [x] **setupChildChannel race condition** — all state mutations inside `setupChildChannel` now dispatched to `serverDispatchQueue.async`; only `syncOperations.addHandler` (NIO pipeline setup) remains on the event loop thread.
 
-- [ ] **messagesReceived unsynchronized increment (server)** — `messagesReceived += 1` at `NIOHandlerServer.swift:809` runs on the NIO event loop thread, not on `serverDispatchQueue`. Dispatch to `serverDispatchQueue` or replace with `NIOLockedValueBox<Int>` / `ManagedAtomic<Int>`.
+- [ ] **messagesReceived unsynchronized increment (server)** — `messagesReceived += 1` in `NIOHandlerServer.swift` runs on the NIO event loop thread, not on `serverDispatchQueue`. Dispatch to `serverDispatchQueue` or replace with `NIOLockedValueBox<Int>` / `ManagedAtomic<Int>`.
 
-- [ ] **messagesReceived unsynchronized increment (client)** — `messagesReceived += 1` at `NIOSocketHandlerClient.swift:706` runs on the NIO event loop, not `socketDispatchQueue`. Same fix as server.
+- [ ] **messagesReceived unsynchronized increment (client)** — `messagesReceived += 1` in `NIOSocketHandlerClient.swift` runs on the NIO event loop, not `socketDispatchQueue`. Same fix as server.
 
-- [ ] **Unbounded `cumulationBuffer` in `NIOStringHandler`** — a peer that never sends the delimiter causes unbounded memory growth and potential DoS (`NIOStringHandler.swift:38-57`). Add a configurable max buffer size to `ServerConfiguration`/`ClientConfiguration`; close the channel when exceeded.
+- [x] **Unbounded `cumulationBuffer` in `NIOStringHandler`** — `maxCumulationBufferSize` (default 1 MB) added to `ServerConfiguration` and `ClientConfiguration`; `NIOStringHandler` checks readable bytes after each append and closes the channel with an error log when the limit is exceeded.
 
-- [ ] **`send()` misleading return value** — both server and client `send()` return `true` synchronously before the async write completes (`NIOHandlerServer.swift:316`, `NIOSocketHandlerClient.swift:472`). Remove the boolean return value from the fire-and-forget overload, or add an `async throws` / `EventLoopFuture<Void>` overload for callers that need delivery confirmation.
+- [x] **`send()` misleading return value** — `send(confirming: String) async throws` and `send(confirming: Data) async throws` added to both server and client; these suspend until `writeAndFlush` completes and throw on failure. Fire-and-forget `send(_:)` still returns `true` immediately by design.
 
 ---
 
@@ -53,7 +53,7 @@ Tackle one item at a time. The public API surface (`NIOSocketHandlerServer`, `NI
 
 - [ ] **Extract `MessageFramer` protocol from `NIOStringHandler`** — define a framing/tokenization protocol; make the newline tokenizer one conformance. Enables future Modbus, length-prefixed, or binary framing without modifying existing code. Inject via `ServerConfiguration`/`ClientConfiguration`. This is also the prerequisite for the `ByteToMessageDecoder` migration.
 
-- [ ] **Extract `ConnectionPool` (internal)** — move `connectedClients`, `connectionQueue`, and `connectionCountByClient` out of `NIOSocketHandlerServer` into a dedicated internal type. Resolves the `setupChildChannel` race condition item above.
+- [ ] **Extract `ConnectionPool` (internal)** — move `connectedClients`, `connectionQueue`, and `connectionCountByClient` out of `NIOSocketHandlerServer` into a dedicated internal type. The `setupChildChannel` dispatch fix addressed the race, but centralizing this state will make future correctness easier to verify.
 
 - [ ] **Extract `Metrics` (internal)** — move `messagesSent`, `messagesReceived`, `connectionAttempts`, `successfulConnections`, and timing fields into a shared `ConnectionMetrics` struct/class used by both server and client.
 
@@ -77,7 +77,7 @@ Tackle one item at a time. The public API surface (`NIOSocketHandlerServer`, `NI
 
 - [ ] **Add error path tests** — no tests exercise connection failure, timeout expiry, or disconnect-before-connect scenarios.
 
-- [ ] **Add `NIOStringHandler` max-buffer test** — once the buffer bound is added, verify the channel is closed when the limit is exceeded (not just that data is dropped).
+- [ ] **Add `NIOStringHandler` max-buffer test** — `maxCumulationBufferSize` is now wired up; add a test that verifies the channel is closed when the limit is exceeded (not just that data is dropped).
 
 - [ ] **Add message ordering test** — verify messages arrive in send order under concurrent client load.
 
@@ -101,6 +101,6 @@ Tackle one item at a time. The public API surface (`NIOSocketHandlerServer`, `NI
 
 ## Documentation
 
-- [ ] **Add code examples to `readme.md`** — the readme has architecture diagrams but no usage snippet. Add a minimal server setup and client connect/send example.
+- [x] **Add code examples to `readme.md`** — Client Usage Example and Server Usage Example sections added, including fire-and-forget and confirmed-send variants.
 
 - [ ] **Expand `diags/Network Diagnostics.md`** — currently only a tcpdump reference. Add `lsof -i :<port>`, `netstat -an`, and application-level diagnostic notes.

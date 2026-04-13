@@ -10,10 +10,12 @@ A lightweight Swift wrapper around SwiftNIO for handling ASCII text communicatio
 ## Features
 
 - **Simple API** — Single-object facade: one `NIOSocketHandlerServer`, one `NIOSocketHandlerClient`. No NIO primitives exposed.
-- **ASCII Text Protocol** — Optimized for newline-delimited text communication
+- **Text and Binary Sends** — `send(_: String)` for newline-delimited text (delimiter appended automatically); `send(_: Data)` for raw binary payloads
+- **Confirmed Delivery** — `send(confirming: String) async throws` and `send(confirming: Data) async throws` suspend until the write is flushed to the kernel or throw on failure
 - **Connection State Management** — Built-in state tracking with OpenCombine publishers for reactive observation
 - **SwiftNIO Powered** — High-performance asynchronous networking built on Apple's SwiftNIO
-- **Offline Message Queue** — Priority queue with configurable expiration; messages are buffered while disconnected and flushed automatically on reconnect
+- **Offline Message Queue** — Priority queue with configurable expiration; String messages are buffered while disconnected and flushed automatically on reconnect
+- **Buffer Safety** — Configurable `maxCumulationBufferSize` (default 1 MB) in `ServerConfiguration`/`ClientConfiguration`; channel closed automatically if a peer sends data without delimiters
 - **Retry Policy** — Configurable reconnection with exponential backoff or fixed delay strategies
 - **`MessageDuplex` Conformance** — Both server and client conform to `MessageSendable` + `MessageReceivable` from `FoundationInterfaces`
 - **Stress Tested** — 10k–15k message throughput tests with deterministic and variable timing
@@ -52,8 +54,11 @@ try await client.connect(host: "127.0.0.1", port: 9000) { message in
     print("Received: \(message)")
 }
 
-// Send a message
-client.send("hello\n")
+// Fire-and-forget send (newline appended automatically)
+client.send("hello")
+
+// Confirmed send — suspends until flushed to kernel
+try await client.send(confirming: "hello")
 
 // Disconnect when done
 client.disconnect()
@@ -75,8 +80,11 @@ try await server.listen(port: 9000) { message in
     print("Client said: \(message)")
 }
 
-// Broadcast to all connected clients
-server.send("hello everyone\n")
+// Fire-and-forget broadcast (newline appended automatically)
+server.send("hello everyone")
+
+// Confirmed send to a specific client
+try await server.send(confirming: "hello", to: clientID)
 ```
 
 ## Client Connection Flow
@@ -113,10 +121,13 @@ sequenceDiagram
         StateHandler->>User: Error notification
     end
 
-    User->>Client: 4. send(message)
-    alt Connected
+    User->>Client: 4. send(message) or send(confirming: message)
+    alt Connected — fire-and-forget
+        Client->>Channel: writeAndFlush(message + "\n", promise: nil)
+    else Connected — confirmed
         Client->>Channel: writeAndFlush(message + "\n")
-    else Disconnected
+        Channel-->>Client: whenComplete → resume continuation
+    else Disconnected (String only)
         Client->>Queue: Enqueue with priority + expiration
     end
 
