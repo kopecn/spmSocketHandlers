@@ -6,8 +6,9 @@ APP_NAME = spmSocketHandlers
 BUILD_DIR = .build
 CONFIG=./.swift-format.json
 
-help:  ## Show available make commands with descriptions
-	@awk 'BEGIN {FS = ":.*?## "}; /^[a-zA-Z0-9_-]+:.*?## / {printf "%-20s -> %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+help: ## Show this help
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
 clean:  ## Clean all build artifacts
 	swift package clean
